@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CVRP ACO Simulator Prototype (Google Maps)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for visualization and typography */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
+        }
+        .simulation-container {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1rem;
+        }
+        @media (min-width: 1024px) {
+            .simulation-container {
+                grid-template-columns: 1fr 3fr; /* Sidebar and main map */
+            }
+        }
+        .btn-primary {
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .btn-primary:hover {
+            box-shadow: 0 6px 8px rgba(0, 0, 0, 0.15);
+            transform: translateY(-1px);
+        }
+        .input-group label {
+            font-weight: 500;
+            color: #374151;
+        }
+        /* Style for the map container */
+        #map {
+            width: 100%;
+            height: 96vh; 
+            min-height: 400px;
+            border-radius: 0.75rem; 
+        }
+    </style>
+</head>
+<body class="p-4 lg:p-8">
+
+    <div class="max-w-7xl mx-auto">
+        <header class="mb-8">
+            <h1 class="text-3xl font-extrabold text-gray-900 mb-1">
+                CVRP Simulation: ACO Prototype (Google Maps)
+            </h1>
+            <p class="text-lg text-gray-500">
+                Place customers on the map using real-world coordinates for the simulation.
+            </p>
+        </header>
+
+        <div id="app" class="simulation-container">
+            <div class="lg:w-full bg-white p-6 rounded-xl shadow-lg h-full">
+                <h2 class="text-xl font-bold mb-4 text-indigo-700 border-b pb-2">Configuration</h2>
+
+                <div class="space-y-4">
+                    <div class="input-group">
+                        <label for="vehicleCapacity" class="block text-sm">Vehicle Capacity ($Q_{max}$)</label>
+                        <input type="number" id="vehicleCapacity" value="150" min="50" class="w-full p-2 border border-gray-300 rounded-lg mt-1 focus:border-indigo-500">
+                    </div>
+                    <div class="input-group">
+                        <label for="numVehicles" class="block text-sm">Number of Vehicles</label>
+                        <input type="number" id="numVehicles" value="4" min="1" class="w-full p-2 border border-gray-300 rounded-lg mt-1 focus:border-indigo-500">
+                    </div>
+                    
+                    <h3 class="text-lg font-semibold mt-6 mb-2 pt-2 border-t">ACO Parameters</h3>
+                    <div class="input-group">
+                        <label for="numAnts" class="block text-sm">Ants ($m$)</label>
+                        <input type="number" id="numAnts" value="15" min="5" class="w-full p-2 border border-gray-300 rounded-lg mt-1">
+                    </div>
+                    <div class="input-group">
+                        <label for="numIterations" class="block text-sm">Iterations</label>
+                        <input type="number" id="numIterations" value="50" min="10" class="w-full p-2 border border-gray-300 rounded-lg mt-1">
+                    </div>
+                    <div class="input-group">
+                        <label for="alpha" class="block text-sm">Pheromone Influence ($\alpha$)</label>
+                        <input type="number" id="alpha" value="1.0" step="0.1" min="0.1" class="w-full p-2 border border-gray-300 rounded-lg mt-1">
+                    </div>
+                    <div class="input-group">
+                        <label for="beta" class="block text-sm">Heuristic Influence ($\beta$)</label>
+                        <input type="number" id="beta" value="2.0" step="0.1" min="0.1" class="w-full p-2 border border-gray-300 rounded-lg mt-1">
+                    </div>
+                    <div class="input-group">
+                        <label for="rho" class="block text-sm">Evaporation Rate ($\rho$)</label>
+                        <input type="number" id="rho" value="0.1" step="0.01" min="0.01" max="0.99" class="w-full p-2 border border-gray-300 rounded-lg mt-1">
+                    </div>
+                </div>
+
+                <div class="mt-6 flex flex-col space-y-3">
+                    <button id="runSimulationBtn"
+                            class="py-3 px-4 bg-indigo-600 text-white font-semibold rounded-xl btn-primary hover:bg-indigo-700 disabled:opacity-50"
+                            onclick="runSimulation()">
+                        Run Simulation
+                    </button>
+                    <button id="resetMapBtn"
+                            class="py-2 px-4 bg-gray-200 text-gray-700 font-semibold rounded-xl hover:bg-gray-300 disabled:opacity-50"
+                            onclick="resetMap()">
+                        Reset Map
+                    </button>
+                </div>
+            </div>
+
+            <div class="bg-white p-6 rounded-xl shadow-lg">
+                <h2 class="text-xl font-bold mb-4 text-indigo-700 border-b pb-2">Visualization & Results</h2>
+                
+                <div class="border border-gray-300 rounded-lg overflow-hidden mb-6 bg-gray-50">
+                    <div id="map"></div>
+                </div>
+
+                <div id="metricsOutput" class="space-y-3 p-4 bg-gray-100 rounded-lg">
+                    <p class="text-base font-semibold text-gray-800">Status: <span id="statusMessage" class="font-normal text-gray-500">Loading map...</span></p>
+                    <p class="text-base font-semibold text-gray-800">Customers Placed ($N$): <span id="numCustomersDisplay" class="font-normal text-indigo-600">0</span></p>
+                    <p class="text-base font-semibold text-gray-800">Best Total Cost (Meters): <span id="bestCost" class="font-normal text-green-600">-</span></p>
+                    <p class="text-base font-semibold text-gray-800">Vehicles Used: <span id="vehiclesUsed" class="font-normal text-blue-600">-</span></p>
+                </div>
+
+                <div class="mt-6">
+                    <h3 class="text-lg font-semibold mb-2 text-gray-700">Detailed Routes</h3>
+                    <div id="routeDetails" class="bg-white p-3 border rounded-lg max-h-40 overflow-y-auto text-sm font-mono text-gray-700">
+                        No routes calculated yet.
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // === CONFIGURATION ===
+        // API Key provided by the user
+        const googleMapsApiKey = "AIzaSyCRJT65GMH-d5AUqLdAMnZaAZ__Igayh6s"; 
+        
+        // Fixed depot location (Example: Kansas City, MO)
+        const depotLocation = { lat: 39.0997, lng: -94.5786 }; 
+        const INITIAL_MAP_ZOOM = 10;
+        
+        // --- Global State ---
+        let map;
+        let markers = [];
+        let polylines = [];
+        let currentSimulator = null;
+        let customerData = [];
+        let nextCustomerId = 1;
+
+        // --- Core Data Structures ---
+
+        class Customer {
+            constructor(id, lat, lng, demand, timeWindowStart, timeWindowEnd, serviceTime = 0.5) {
+                this.id = id;
+                this.lat = lat;
+                this.lng = lng;
+                this.demand = demand;
+                this.timeWindowStart = timeWindowStart;
+                this.timeWindowEnd = timeWindowEnd;
+                this.serviceTime = serviceTime;
+            }
+        }
+
+        class Vehicle {
+            constructor(id, capacity) {
+                this.id = id;
+                this.capacity = capacity;
+                this.currentLoad = 0;
+                this.currentTime = 0;
+                this.route = []; // Stores customer IDs (1-indexed)
+                this.currentLocationIndex = 0; // 0 for depot
+            }
+        }
+
+        // --- Utility Functions ---
+
+        /** Calculates distance between two LatLng objects (in meters) using the Google Maps Geometry Library. */
+        const distance = (loc1, loc2) => {
+            if (typeof google === 'undefined' || !google.maps.geometry) {
+                // Fallback (e.g., if geometry library failed to load)
+                return 1000; 
+            }
+            const latLng1 = new google.maps.LatLng(loc1.lat, loc1.lng);
+            const latLng2 = new google.maps.LatLng(loc2.lat, loc2.lng);
+            // Returns distance in meters
+            return google.maps.geometry.spherical.computeDistanceBetween(latLng1, latLng2);
+        };
+
+        /** Generates a random number following a Gaussian (Normal) distribution. */
+        const randGaussian = (mean = 0, stdDev = 1) => {
+            let u = 0, v = 0;
+            while (u === 0) u = Math.random(); 
+            while (v === 0) v = Math.random();
+            let z = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+            return z * stdDev + mean;
+        };
+
+        // --- ACO CVRP Core Logic (Adapted for Lat/Lng) ---
+
+        class AcoCvrpSimulator {
+            constructor(depotLocation, customers, numVehicles, vehicleCapacity, params) {
+                this.depotLocation = depotLocation;
+                this.customers = customers;
+                this.numVehicles = numVehicles;
+                this.vehicleCapacity = vehicleCapacity;
+                
+                // ACO Parameters
+                this.numAnts = params.numAnts;
+                this.numIterations = params.numIterations;
+                this.alpha = params.alpha;
+                this.beta = params.beta;
+                this.rho = params.rho;
+                this.Q = params.Q;
+                this.tau0 = params.tau0 || 0.1;
+                
+                // Locations (0: Depot, 1..N: Customers)
+                this.locations = [depotLocation].concat(this.customers.map(c => ({ lat: c.lat, lng: c.lng })));
+                this.numNodes = this.locations.length;
+                
+                this.distanceMatrix = this._calculateDistanceMatrix();
+                // Environmental matrices are initialized once per simulation run
+                this.trafficMatrix = this._initializeEnvironmentalMatrix(1.2, 0.8, 0.3); 
+                this.weatherMatrix = this._initializeEnvironmentalMatrix(1.1, 0.9, 0.5); 
+                
+                this.pheromoneMatrix = Array(this.numNodes).fill(0).map(() => 
+                    Array(this.numNodes).fill(this.tau0)
+                );
+                
+                this.bestSolution = null;
+                this.bestCost = Infinity;
+            }
+
+            _calculateDistanceMatrix() {
+                const n = this.numNodes;
+                const distMatrix = Array(n).fill(0).map(() => Array(n).fill(0));
+                for (let i = 0; i < n; i++) {
+                    for (let j = 0; j < n; j++) {
+                        if (i !== j) {
+                            distMatrix[i][j] = distance(this.locations[i], this.locations[j]); // Distance in meters
+                        }
+                    }
+                }
+                return distMatrix;
+            }
+
+            _initializeEnvironmentalMatrix(highFactor, lowFactor, highChance) {
+                const env = Array(this.numNodes).fill(0).map(() => Array(this.numNodes).fill(1.0));
+                for (let i = 0; i < this.numNodes; i++) {
+                    for (let j = 0; j < this.numNodes; j++) {
+                        if (i !== j) {
+                            const r = Math.random();
+                            if (r < highChance) {
+                                env[i][j] = lowFactor + Math.random() * (highFactor - lowFactor);
+                            } else {
+                                env[i][j] = 1.0;
+                            }
+                        }
+                    }
+                }
+                return env;
+            }
+
+            _calculateTravelTime(i, j) {
+                const distanceKm = this.distanceMatrix[i][j] / 1000; 
+                const baseSpeed = 50; // km/h base speed
+                const baseTimeHours = distanceKm / baseSpeed;
+                const actualTimeHours = baseTimeHours * this.trafficMatrix[i][j] * this.weatherMatrix[i][j];
+                return actualTimeHours;
+            }
+            
+            _calculateAdjustedCost(i, j) {
+                // Cost is the Adjusted Distance in meters for the ACO calculation
+                return this.distanceMatrix[i][j] * this.trafficMatrix[i][j] * this.weatherMatrix[i][j];
+            }
+
+            _calculateHeuristic(i, j) {
+                const adjustedCost = this._calculateAdjustedCost(i, j);
+                // Scaling heuristic influence
+                return 1000000.0 / Math.max(adjustedCost, 1); 
+            }
+
+            _calculateProbability(current, unvisited, vehicle) {
+                const probabilities = {};
+                let total = 0;
+
+                for (const nextCustomerIndex of unvisited) {
+                    // Check capacity
+                    const customer = this.customers[nextCustomerIndex - 1];
+                    if (vehicle.currentLoad + customer.demand > vehicle.capacity) {
+                        continue;
+                    }
+
+                    // --- Time Window Constraint ---
+                    const travelTime = this._calculateTravelTime(current, nextCustomerIndex);
+                    const arrivalTime = vehicle.currentTime + travelTime;
+                    let twFactor = 1.0;
+
+                    if (arrivalTime > customer.timeWindowEnd) {
+                        twFactor = 0.1; // Strong penalty for late arrival
+                    } else if (arrivalTime < customer.timeWindowStart) {
+                        twFactor = 0.8; // Minor penalty for waiting (early arrival)
+                    }
+
+                    // --- Probability Calculation (P_ij^k) ---
+                    const pheromone = Math.pow(this.pheromoneMatrix[current][nextCustomerIndex], this.alpha);
+                    const heuristic = Math.pow(this._calculateHeuristic(current, nextCustomerIndex), this.beta);
+                    
+                    const demandFactor = customer.demand / this.vehicleCapacity;
+
+                    const probability = pheromone * heuristic * twFactor * demandFactor;
+                    probabilities[nextCustomerIndex] = probability;
+                    total += probability;
+                }
+
+                // Normalize probabilities
+                if (total > 0) {
+                    for (const customerIndex in probabilities) {
+                        probabilities[customerIndex] /= total;
+                    }
+                }
+                return probabilities;
+            }
+
+            _selectNextCustomer(probabilities) {
+                if (Object.keys(probabilities).length === 0) {
+                    return -1;
+                }
+                
+                const rand = Math.random();
+                let cumulative = 0;
+                
+                for (const customerIndexStr in probabilities) {
+                    const customerIndex = parseInt(customerIndexStr);
+                    cumulative += probabilities[customerIndexStr];
+                    if (rand <= cumulative) {
+                        return customerIndex;
+                    }
+                }
+                return parseInt(Object.keys(probabilities).pop());
+            }
+
+            _constructAntSolution() {
+                let unvisited = new Set(Array.from({ length: this.numNodes - 1 }, (_, i) => i + 1));
+                const routes = [];
+                
+                for (let vId = 0; vId < this.numVehicles; vId++) {
+                    if (unvisited.size === 0) break;
+                    
+                    const vehicle = new Vehicle(vId, this.vehicleCapacity);
+                    let current = 0; // Start at depot (index 0)
+                    
+                    while (unvisited.size > 0) {
+                        const probabilities = this._calculateProbability(current, Array.from(unvisited), vehicle);
+                        
+                        if (Object.keys(probabilities).length === 0) {
+                            break; 
+                        }
+                        
+                        const nextCustomerIndex = this._selectNextCustomer(probabilities);
+                        
+                        if (nextCustomerIndex === -1) {
+                            break;
+                        }
+                        
+                        const customer = this.customers[nextCustomerIndex - 1];
+                        
+                        // Update vehicle state for next customer
+                        vehicle.route.push(nextCustomerIndex);
+                        vehicle.currentLoad += customer.demand;
+                        
+                        const travelTime = this._calculateTravelTime(current, nextCustomerIndex);
+                        
+                        // Calculate service start time (Wait time if early)
+                        const arrivalTime = vehicle.currentTime + travelTime;
+                        const serviceStart = Math.max(arrivalTime, customer.timeWindowStart);
+                        
+                        vehicle.currentTime = serviceStart + customer.serviceTime;
+                        
+                        unvisited.delete(nextCustomerIndex);
+                        current = nextCustomerIndex;
+                    }
+
+                    // Close route: return to depot (0)
+                    if (vehicle.route.length > 0) {
+                        const travelTimeBack = this._calculateTravelTime(current, 0);
+                        vehicle.currentTime += travelTimeBack;
+                        routes.push(vehicle.route);
+                    }
+                }
+                
+                return routes;
+            }
+            
+            _calculateSolutionCost(routes) {
+                let totalCost = 0;
+                
+                for (const route of routes) {
+                    if (!route || route.length === 0) continue;
+                    
+                    let prev = 0; // Depot (index 0)
+                    for (const customerIndex of route) {
+                        totalCost += this._calculateAdjustedCost(prev, customerIndex);
+                        prev = customerIndex;
+                    }
+                    // Return to depot
+                    totalCost += this._calculateAdjustedCost(prev, 0);
+                }
+                return totalCost; // Cost in Adjusted Meters
+            }
+
+            _updatePheromones(allSolutions) {
+                // Evaporation
+                for (let i = 0; i < this.numNodes; i++) {
+                    for (let j = 0; j < this.numNodes; j++) {
+                        this.pheromoneMatrix[i][j] *= (1 - this.rho);
+                    }
+                }
+                
+                // Deposition (using only the best solution of the iteration)
+                const bestIterSolution = allSolutions.reduce((best, current) => current.cost < best.cost ? current : best);
+                
+                const deposit = this.Q / bestIterSolution.cost; 
+                
+                for (const route of bestIterSolution.routes) {
+                    if (!route || route.length === 0) continue;
+                    
+                    let prev = 0;
+                    for (const customerIndex of route) {
+                        this.pheromoneMatrix[prev][customerIndex] += deposit;
+                        this.pheromoneMatrix[customerIndex][prev] += deposit; // Symmetric
+                        prev = customerIndex;
+                    }
+                    // Return to depot
+                    this.pheromoneMatrix[prev][0] += deposit;
+                    this.pheromoneMatrix[0][prev] += deposit;
+                }
+            }
+
+            optimize() {
+                const startTime = performance.now();
+                let iterationHistory = [];
+
+                for (let iter = 0; iter < this.numIterations; iter++) {
+                    const iterationSolutions = [];
+                    
+                    // Ant construction
+                    for (let ant = 0; ant < this.numAnts; ant++) {
+                        const routes = this._constructAntSolution();
+                        const cost = this._calculateSolutionCost(routes);
+                        iterationSolutions.push({ routes, cost });
+                        
+                        // Update best solution
+                        if (cost < this.bestCost) {
+                            this.bestCost = cost;
+                            this.bestSolution = routes;
+                        }
+                    }
+                    
+                    // Pheromone update
+                    this._updatePheromones(iterationSolutions);
+                    
+                    iterationHistory.push(this.bestCost);
+                }
+
+                const endTime = performance.now();
+
+                return {
+                    solution: this.bestSolution,
+                    cost: this.bestCost,
+                    time: (endTime - startTime) / 1000,
+                    history: iterationHistory
+                };
+            }
+        }
+
+        // --- Scenario & UI Logic ---
+
+        /** Creates a new customer with random demand and time window */
+        function createRandomCustomer(lat, lng) {
+            const id = nextCustomerId++;
+            const demand = Math.floor(Math.random() * 30) + 10; // 10 to 40 units
+            
+            // Generate time windows based on quadrant heuristics relative to depot
+            let twStart, twEnd;
+            const latDiff = lat - depotLocation.lat;
+            const lngDiff = lng - depotLocation.lng;
+
+            if (latDiff >= 0 && lngDiff >= 0) { // NE Quadrant (Morning/Early)
+                twStart = Math.floor(Math.random() * 2) + 8; // 8-10 AM
+            } else if (latDiff >= 0 && lngDiff < 0) { // NW Quadrant (Late Morning/Midday)
+                twStart = Math.floor(Math.random() * 2) + 10; // 10 AM - 12 PM
+            } else if (latDiff < 0 && lngDiff < 0) { // SW Quadrant (Early Afternoon)
+                 twStart = Math.floor(Math.random() * 2) + 12; // 12 PM - 2 PM
+            } else { // SE Quadrant (Late Afternoon)
+                twStart = Math.floor(Math.random() * 2) + 14; // 2 PM - 4 PM
+            }
+            twEnd = twStart + Math.floor(Math.random() * 2) + 2; // 2-4 hour window
+
+            return new Customer(id, lat, lng, demand, twStart, twEnd);
+        }
+
+        /** Main function to run the simulation */
+        function runSimulation() {
+            const btn = document.getElementById('runSimulationBtn');
+            const numCustomers = customerData.length;
+
+            if (numCustomers === 0) {
+                document.getElementById('statusMessage').textContent = 'Error: Please place at least one customer on the map.';
+                document.getElementById('statusMessage').classList.add('text-red-600');
+                return;
+            }
+
+            btn.disabled = true;
+            document.getElementById('statusMessage').textContent = `Running optimization for ${numCustomers} customers...`;
+            document.getElementById('statusMessage').classList.add('text-yellow-600');
+            document.getElementById('statusMessage').classList.remove('text-gray-500', 'text-green-600', 'text-red-600');
+
+            // 1. Get Parameters
+            const vehicleCapacity = parseInt(document.getElementById('vehicleCapacity').value);
+            const numVehicles = parseInt(document.getElementById('numVehicles').value);
+            const numAnts = parseInt(document.getElementById('numAnts').value);
+            const numIterations = parseInt(document.getElementById('numIterations').value);
+            const alpha = parseFloat(document.getElementById('alpha').value);
+            const beta = parseFloat(document.getElementById('beta').value);
+            const rho = parseFloat(document.getElementById('rho').value);
+
+            // 2. Setup Simulator
+            const params = { numAnts, numIterations, alpha, beta, rho, Q: 1000000 }; 
+            currentSimulator = new AcoCvrpSimulator(depotLocation, customerData, numVehicles, vehicleCapacity, params);
+            
+            // Use a short delay to allow the UI to update the 'Running' status
+            setTimeout(() => {
+                // 3. Run Optimization
+                const results = currentSimulator.optimize();
+
+                // 4. Update UI
+                updateResults(results);
+                drawRoutes(currentSimulator.bestSolution, currentSimulator.customers);
+
+                btn.disabled = false;
+                document.getElementById('statusMessage').textContent = 'Optimization Complete!';
+                document.getElementById('statusMessage').classList.add('text-green-600');
+                document.getElementById('statusMessage').classList.remove('text-yellow-600');
+
+            }, 50); // Small delay
+        }
+
+        /** Clears markers, polylines, and resets customer data */
+        function resetMap() {
+            // Clear existing Google Maps elements
+            markers.forEach(marker => marker.setMap(null));
+            polylines.forEach(polyline => polyline.setMap(null));
+            markers = [];
+            polylines = [];
+            
+            // Reset simulation data
+            customerData = [];
+            nextCustomerId = 1;
+            currentSimulator = null;
+            
+            // Re-place depot marker
+            placeDepotMarker();
+
+            // Update UI
+            document.getElementById('numCustomersDisplay').textContent = '0';
+            document.getElementById('statusMessage').textContent = 'Map reset. Click on the map to place customers.';
+            document.getElementById('statusMessage').classList.remove('text-red-600', 'text-yellow-600', 'text-green-600');
+            document.getElementById('statusMessage').classList.add('text-gray-500');
+            document.getElementById('bestCost').textContent = '-';
+            document.getElementById('vehiclesUsed').textContent = '-';
+            document.getElementById('routeDetails').textContent = 'No routes calculated yet.';
+        }
+
+
+        /** Updates the metrics and route details panel */
+        function updateResults(results) {
+            const solution = results.solution;
+            const cost = results.cost;
+            const vehiclesUsed = solution.filter(r => r.length > 0).length;
+
+            document.getElementById('bestCost').textContent = (cost / 1000).toFixed(2) + ' km';
+            document.getElementById('vehiclesUsed').textContent = `${vehiclesUsed} / ${currentSimulator.numVehicles}`;
+
+            // Route Details
+            const routeDetailsDiv = document.getElementById('routeDetails');
+            if (solution && solution.length > 0) {
+                routeDetailsDiv.innerHTML = solution.map((route, index) => {
+                    if (route.length === 0) return '';
+                    const demand = route.reduce((sum, cIdx) => sum + customerData[cIdx - 1].demand, 0);
+                    const routeStr = route.map(cIdx => `C${cIdx}`).join(' → ');
+                    const totalRouteCost = (currentSimulator._calculateSolutionCost([route]) / 1000).toFixed(2);
+                    return `
+                        <p class="mb-1">
+                            <span class="text-indigo-600">V${index + 1}</span> (D: ${demand}, Cost: ${totalRouteCost} km): Depot → ${routeStr} → Depot
+                        </p>
+                    `;
+                }).join('');
+            } else {
+                routeDetailsDiv.textContent = 'Failed to find a feasible solution or no routes generated.';
+            }
+        }
+
+        // --- Google Maps Logic ---
+
+        const colorPalette = [
+            '#ef4444', '#f97316', '#eab308', '#22c55e', 
+            '#06b6d4', '#3b82f6', '#8b5cf6', '#d946ef',
+            '#64748b', '#dc2626', '#34d399', '#f472b6' 
+        ];
+
+        /** Initializes the Google Map instance */
+        function initMap() {
+            document.getElementById('statusMessage').textContent = 'Map ready. Click to place customers.';
+            document.getElementById('statusMessage').classList.remove('text-red-600');
+            document.getElementById('statusMessage').classList.add('text-gray-500');
+
+            map = new google.maps.Map(document.getElementById("map"), {
+                center: depotLocation,
+                zoom: INITIAL_MAP_ZOOM,
+                mapTypeId: 'roadmap',
+                streetViewControl: false,
+                mapTypeControl: false,
+                fullscreenControl: false
+            });
+
+            // Place initial depot marker
+            placeDepotMarker();
+
+            // Add click listener to place customers
+            map.addListener('click', handleMapClick);
+        }
+
+        /** Places the fixed Depot marker */
+        function placeDepotMarker() {
+            const marker = new google.maps.Marker({
+                position: depotLocation,
+                map: map,
+                icon: {
+                    url: "data:image/svg+xml;charset=UTF-8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231e3a8a'><path d='M12 2L4 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-8-3zm0 10.99l-5-5V6.3l5-1.87 5 1.87v1.69l-5 5z'/></svg>",
+                    scaledSize: new google.maps.Size(32, 32),
+                    anchor: new google.maps.Point(16, 16)
+                },
+                title: 'Depot (HUB)'
+            });
+            markers.push(marker);
+        }
+
+        /** Handles click event to place a new customer marker */
+        function handleMapClick(mapsMouseEvent) {
+            const lat = mapsMouseEvent.latLng.lat();
+            const lng = mapsMouseEvent.latLng.lng();
+
+            // Create and add the new customer
+            const newCustomer = createRandomCustomer(lat, lng);
+            customerData.push(newCustomer);
+            
+            // Create a marker for the customer
+            const marker = new google.maps.Marker({
+                position: { lat, lng },
+                map: map,
+                label: {
+                    text: `C${newCustomer.id}`,
+                    color: "white",
+                    fontWeight: "bold"
+                },
+                icon: {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    scale: 8,
+                    fillColor: colorPalette[newCustomer.id % colorPalette.length], 
+                    fillOpacity: 0.8,
+                    strokeWeight: 0
+                },
+                title: `C${newCustomer.id} | D:${newCustomer.demand}, TW:${newCustomer.timeWindowStart}-${newCustomer.timeWindowEnd}`
+            });
+            markers.push(marker);
+
+            // Update UI
+            document.getElementById('numCustomersDisplay').textContent = customerData.length;
+            document.getElementById('statusMessage').textContent = `Customer C${newCustomer.id} placed at (${lat.toFixed(4)}, ${lng.toFixed(4)}). Ready to run simulation.`;
+            document.getElementById('statusMessage').classList.remove('text-red-600', 'text-yellow-600', 'text-green-600');
+            document.getElementById('statusMessage').classList.add('text-gray-500');
+        }
+
+
+        /** Draws the routes on the Google Map using Polylines */
+        function drawRoutes(routes, customers) {
+            // Clear existing polylines
+            polylines.forEach(polyline => polyline.setMap(null));
+            polylines = [];
+            
+            if (!routes || routes.length === 0) return;
+
+            routes.forEach((route, vIndex) => {
+                if (!route || route.length === 0) return;
+                
+                const color = colorPalette[vIndex % colorPalette.length];
+                let path = [];
+                
+                // Start at Depot
+                path.push(depotLocation);
+
+                route.forEach(cIdx => {
+                    const customer = customers[cIdx - 1];
+                    path.push({ lat: customer.lat, lng: customer.lng });
+                });
+
+                // Return to Depot
+                path.push(depotLocation);
+
+                const polyline = new google.maps.Polyline({
+                    path: path,
+                    geodesic: true, 
+                    strokeColor: color,
+                    strokeOpacity: 0.7,
+                    strokeWeight: 3.5,
+                    icons: [{
+                        icon: { path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 3, strokeColor: color, fillOpacity: 1, fillColor: color },
+                        offset: '100%'
+                    }]
+                });
+
+                polyline.setMap(map);
+                polylines.push(polyline);
+            });
+        }
+        
+        /** Loads the Google Maps API script */
+        function loadGoogleMapsScript() {
+            const script = document.createElement('script');
+            script.src = `https://maps.googleapis.com/maps/api/js?key=${googleMapsApiKey}&libraries=geometry&callback=initMap`;
+            script.async = true;
+            document.head.appendChild(script);
+        }
+
+        // --- Initialization ---
+
+        window.onload = loadGoogleMapsScript;
+        
+    </script>
+</body>
+</html>
