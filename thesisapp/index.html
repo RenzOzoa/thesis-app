@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CVRP ACO Simulator Prototype (Google Maps)</title>
+    <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         /* Custom styles for visualization and typography */
@@ -55,10 +56,12 @@
         </header>
 
         <div id="app" class="simulation-container">
+            <!-- Configuration Panel -->
             <div class="lg:w-full bg-white p-6 rounded-xl shadow-lg h-full">
                 <h2 class="text-xl font-bold mb-4 text-indigo-700 border-b pb-2">Configuration</h2>
 
                 <div class="space-y-4">
+                    <!-- Scenario Inputs -->
                     <div class="input-group">
                         <label for="vehicleCapacity" class="block text-sm">Vehicle Capacity ($Q_{max}$)</label>
                         <input type="number" id="vehicleCapacity" value="150" min="50" class="w-full p-2 border border-gray-300 rounded-lg mt-1 focus:border-indigo-500">
@@ -69,6 +72,7 @@
                     </div>
                     
                     <h3 class="text-lg font-semibold mt-6 mb-2 pt-2 border-t">ACO Parameters</h3>
+                    <!-- ACO Inputs -->
                     <div class="input-group">
                         <label for="numAnts" class="block text-sm">Ants ($m$)</label>
                         <input type="number" id="numAnts" value="15" min="5" class="w-full p-2 border border-gray-300 rounded-lg mt-1">
@@ -105,13 +109,16 @@
                 </div>
             </div>
 
+            <!-- Visualization and Results Panel -->
             <div class="bg-white p-6 rounded-xl shadow-lg">
                 <h2 class="text-xl font-bold mb-4 text-indigo-700 border-b pb-2">Visualization & Results</h2>
                 
+                <!-- Google Map Container -->
                 <div class="border border-gray-300 rounded-lg overflow-hidden mb-6 bg-gray-50">
                     <div id="map"></div>
                 </div>
 
+                <!-- Metrics Display -->
                 <div id="metricsOutput" class="space-y-3 p-4 bg-gray-100 rounded-lg">
                     <p class="text-base font-semibold text-gray-800">Status: <span id="statusMessage" class="font-normal text-gray-500">Loading map...</span></p>
                     <p class="text-base font-semibold text-gray-800">Customers Placed ($N$): <span id="numCustomersDisplay" class="font-normal text-indigo-600">0</span></p>
@@ -119,6 +126,7 @@
                     <p class="text-base font-semibold text-gray-800">Vehicles Used: <span id="vehiclesUsed" class="font-normal text-blue-600">-</span></p>
                 </div>
 
+                <!-- Detailed Routes -->
                 <div class="mt-6">
                     <h3 class="text-lg font-semibold mb-2 text-gray-700">Detailed Routes</h3>
                     <div id="routeDetails" class="bg-white p-3 border rounded-lg max-h-40 overflow-y-auto text-sm font-mono text-gray-700">
@@ -135,9 +143,9 @@
         // API Key provided by the user
         const googleMapsApiKey = "AIzaSyCRJT65GMH-d5AUqLdAMnZaAZ__Igayh6s"; 
         
-        // Fixed depot location (Example: Kansas City, MO)
-        const depotLocation = { lat: 39.0997, lng: -94.5786 }; 
-        const INITIAL_MAP_ZOOM = 10;
+        // Fixed depot location: Now set to Barangay San Manuel, Puerto Princesa, Philippines
+        const depotLocation = { lat: 9.7735, lng: 118.7524 }; 
+        const INITIAL_MAP_ZOOM = 13; // Adjusted zoom for a district view
         
         // --- Global State ---
         let map;
@@ -485,16 +493,14 @@
             const latDiff = lat - depotLocation.lat;
             const lngDiff = lng - depotLocation.lng;
 
-            if (latDiff >= 0 && lngDiff >= 0) { // NE Quadrant (Morning/Early)
-                twStart = Math.floor(Math.random() * 2) + 8; // 8-10 AM
-            } else if (latDiff >= 0 && lngDiff < 0) { // NW Quadrant (Late Morning/Midday)
-                twStart = Math.floor(Math.random() * 2) + 10; // 10 AM - 12 PM
-            } else if (latDiff < 0 && lngDiff < 0) { // SW Quadrant (Early Afternoon)
-                 twStart = Math.floor(Math.random() * 2) + 12; // 12 PM - 2 PM
-            } else { // SE Quadrant (Late Afternoon)
-                twStart = Math.floor(Math.random() * 2) + 14; // 2 PM - 4 PM
-            }
-            twEnd = twStart + Math.floor(Math.random() * 2) + 2; // 2-4 hour window
+            // Simplified time window logic for a general city area (Philippines time)
+            // Let's assume standard working hours are 8 AM to 5 PM (8 to 17 in hours)
+            const baseHour = Math.floor(Math.random() * 6) + 9; // 9 AM to 3 PM
+            twStart = baseHour + randGaussian(0, 1.5); // Randomize start time slightly
+            twStart = Math.max(8, Math.min(16, twStart)); // Keep it within 8 AM to 4 PM
+            
+            // Time window duration is 2-4 hours
+            twEnd = twStart + Math.floor(Math.random() * 2) + 2; 
 
             return new Customer(id, lat, lng, demand, twStart, twEnd);
         }
@@ -505,6 +511,7 @@
             const numCustomers = customerData.length;
 
             if (numCustomers === 0) {
+                // Use a modal-like message box instead of alert()
                 document.getElementById('statusMessage').textContent = 'Error: Please place at least one customer on the map.';
                 document.getElementById('statusMessage').classList.add('text-red-600');
                 return;
@@ -670,7 +677,7 @@
                     fillOpacity: 0.8,
                     strokeWeight: 0
                 },
-                title: `C${newCustomer.id} | D:${newCustomer.demand}, TW:${newCustomer.timeWindowStart}-${newCustomer.timeWindowEnd}`
+                title: `C${newCustomer.id} | D:${newCustomer.demand}, TW:${newCustomer.timeWindowStart.toFixed(1)}-${newCustomer.timeWindowEnd.toFixed(1)}`
             });
             markers.push(marker);
 
