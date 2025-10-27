@@ -3,6 +3,16 @@
 const depotLocation = { lat: 9.7735, lng: 118.7524 }; 
 const INITIAL_MAP_ZOOM = 13; // Adjusted zoom for a district view
 
+// --- Heterogeneous Fleet Properties ---
+// Capacity is defined as "max delivery points" or "max stops".
+// Speed is in km/h.
+const VEHICLE_PROPERTIES = {
+    motorcycle: { speed: 40, capacity: 10 },
+    tricycle: { speed: 35, capacity: 15 }, // Avg speed for 30-40 range
+    car: { speed: 40, capacity: 20 },
+    van: { speed: 40, capacity: 30 }
+};
+
 // Global State
 let map;
 let markers = [];
@@ -10,6 +20,10 @@ let polylines = [];
 let currentSimulator = null;
 let customerData = [];
 let nextCustomerId = 1;
+
+// --- State for selected vehicle and plotting limit ---
+let selectedVehicleType = 'motorcycle'; // Default
+let maxCustomers = 10; // Default capacity for motorcycle
 
 const colorPalette = [
     '#ef4444', '#f97316', '#eab308', '#22c55e', 
@@ -28,7 +42,7 @@ class Customer {
         this.id = id;
         this.lat = lat;
         this.lng = lng;
-        this.demand = demand;
+        this.demand = demand; // Now represents "1 delivery point"
         this.timeWindowStart = timeWindowStart;
         this.timeWindowEnd = timeWindowEnd;
         this.serviceTime = serviceTime;
@@ -39,13 +53,21 @@ class Vehicle {
     /**
      * Represents a delivery vehicle state during ant construction.
      */
-    constructor(id, capacity) {
+    constructor(id, type, speed, maxStops) {
         this.id = id;
-        this.capacity = capacity;
-        this.currentLoad = 0;
-        this.currentTime = 0; // Current time in hours from the start of the day
-        this.route = []; // Stores customer IDs (1-indexed)
+        this.type = type;         // 'motorcycle', 'van', etc.
+        this.speed = speed;       // km/h
+        this.maxStops = maxStops; // Max number of customers
+        this.currentTime = 0;     // Current time in hours from the start of the day
+        this.route = [];          // Stores customer IDs (1-indexed)
         this.currentLocationIndex = 0; // 0 for depot
+    }
+
+    /** Resets the vehicle's state for a new ant simulation. */
+    reset() {
+        this.currentTime = 0;
+        this.route = [];
+        this.currentLocationIndex = 0;
     }
 }
 
@@ -80,12 +102,24 @@ class AcoCvrpSimulator {
     /**
      * Ant Colony Optimization simulator for CVRP with Time Windows and Environmental factors.
      */
-    constructor(depotLocation, customers, numVehicles, vehicleCapacity, params) {
+    constructor(depotLocation, customers, fleetConfig, params) {
         this.depotLocation = depotLocation;
         this.customers = customers;
-        this.numVehicles = numVehicles;
-        this.vehicleCapacity = vehicleCapacity;
         
+        // --- Build vehicle fleet ---
+        this.vehicles = [];
+        let vId = 0;
+        for (const [type, count] of Object.entries(fleetConfig)) {
+            if (count > 0) {
+                const props = VEHICLE_PROPERTIES[type];
+                for (let i = 0; i < count; i++) {
+                    this.vehicles.push(new Vehicle(vId++, type, props.speed, props.capacity));
+                }
+            }
+        }
+        this.numVehicles = this.vehicles.length;
+        // --- (End fleet logic) ---
+
         // ACO Parameters
         this.numAnts = params.numAnts;
         this.numIterations = params.numIterations;
@@ -147,9 +181,9 @@ class AcoCvrpSimulator {
     }
 
     /** Calculates travel time in hours, incorporating distance and environmental factors. */
-    _calculateTravelTime(i, j) {
+    _calculateTravelTime(i, j, vehicle) {
         const distanceKm = this.distanceMatrix[i][j] / 1000; 
-        const baseSpeed = 50; // km/h base speed
+        const baseSpeed = vehicle.speed; // km/h, from vehicle properties
         const baseTimeHours = distanceKm / baseSpeed;
         const actualTimeHours = baseTimeHours * this.trafficMatrix[i][j] * this.weatherMatrix[i][j];
         return actualTimeHours;
@@ -175,13 +209,13 @@ class AcoCvrpSimulator {
         for (const nextCustomerIndex of unvisited) {
             const customer = this.customers[nextCustomerIndex - 1];
             
-            // 1. Capacity Constraint
-            if (vehicle.currentLoad + customer.demand > vehicle.capacity) {
+            // 1. Capacity Constraint (check number of stops)
+            if (vehicle.route.length >= vehicle.maxStops) {
                 continue;
             }
 
             // 2. Time Window Constraint Check
-            const travelTime = this._calculateTravelTime(current, nextCustomerIndex);
+            const travelTime = this._calculateTravelTime(current, nextCustomerIndex, vehicle);
             const arrivalTime = vehicle.currentTime + travelTime;
             let twFactor = 1.0;
 
@@ -195,9 +229,7 @@ class AcoCvrpSimulator {
             const pheromone = Math.pow(this.pheromoneMatrix[current][nextCustomerIndex], this.alpha);
             const heuristic = Math.pow(this._calculateHeuristic(current, nextCustomerIndex), this.beta);
             
-            const demandFactor = customer.demand / this.vehicleCapacity;
-
-            const probability = pheromone * heuristic * twFactor * demandFactor;
+            const probability = pheromone * heuristic * twFactor;
             probabilities[nextCustomerIndex] = probability;
             total += probability;
         }
@@ -234,11 +266,14 @@ class AcoCvrpSimulator {
     _constructAntSolution() {
         let unvisited = new Set(Array.from({ length: this.numNodes - 1 }, (_, i) => i + 1));
         const routes = [];
+
+        // Reset all vehicles for this new ant
+        this.vehicles.forEach(v => v.reset());
         
-        for (let vId = 0; vId < this.numVehicles; vId++) {
+        // Iterate over the fleet (which is now just 1 vehicle)
+        for (const vehicle of this.vehicles) {
             if (unvisited.size === 0) break;
             
-            const vehicle = new Vehicle(vId, this.vehicleCapacity);
             let current = 0; // Start at depot (index 0)
             
             while (unvisited.size > 0) {
@@ -256,12 +291,11 @@ class AcoCvrpSimulator {
                 
                 const customer = this.customers[nextCustomerIndex - 1];
                 
-                // Update vehicle state: add customer, update load
+                // Update vehicle state: add customer
                 vehicle.route.push(nextCustomerIndex);
-                vehicle.currentLoad += customer.demand;
                 
                 // Time calculation
-                const travelTime = this._calculateTravelTime(current, nextCustomerIndex);
+                const travelTime = this._calculateTravelTime(current, nextCustomerIndex, vehicle);
                 const arrivalTime = vehicle.currentTime + travelTime;
                 
                 // Service start time (wait if early)
@@ -274,10 +308,10 @@ class AcoCvrpSimulator {
 
             // Close route: return to depot (0) if the vehicle served customers
             if (vehicle.route.length > 0) {
-                const travelTimeBack = this._calculateTravelTime(current, 0);
+                const travelTimeBack = this._calculateTravelTime(current, 0, vehicle);
                 vehicle.currentTime += travelTimeBack;
-                routes.push(vehicle.route);
             }
+            routes.push(vehicle.route);
         }
         
         return routes;
@@ -375,7 +409,7 @@ class AcoCvrpSimulator {
 /** Creates a new customer with random demand and time window */
 function createRandomCustomer(lat, lng) {
     const id = nextCustomerId++;
-    const demand = Math.floor(Math.random() * 30) + 10; // 10 to 40 units
+    const demand = 1; // Each customer is 1 delivery point
     
     // Time window logic: standard working hours (8 AM to 5 PM = 8 to 17 in hours)
     const baseHour = Math.floor(Math.random() * 6) + 9; // 9 AM (9) to 3 PM (15)
@@ -399,31 +433,35 @@ window.runSimulation = function() {
         return;
     }
 
+    // 1. Get Selected Vehicle Type
+    const vehicleType = document.getElementById('vehicleTypeSelect').value;
+    const fleetConfig = {
+        [vehicleType]: 1 // Create a fleet of 1 vehicle of the selected type
+    };
+    
     // UI state update
     btn.disabled = true;
     document.getElementById('statusMessage').textContent = `Running optimization for ${numCustomers} customers...`;
     document.getElementById('statusMessage').classList.add('text-yellow-600');
     document.getElementById('statusMessage').classList.remove('text-gray-500', 'text-green-600', 'text-red-600');
 
-    // 1. Get Parameters from UI
-    const vehicleCapacity = parseInt(document.getElementById('vehicleCapacity').value);
-    const numVehicles = parseInt(document.getElementById('numVehicles').value);
+    // 2. Get ACO Parameters from UI
     const numAnts = parseInt(document.getElementById('numAnts').value);
     const numIterations = parseInt(document.getElementById('numIterations').value);
     const alpha = parseFloat(document.getElementById('alpha').value);
     const beta = parseFloat(document.getElementById('beta').value);
     const rho = parseFloat(document.getElementById('rho').value);
 
-    // 2. Setup Simulator
+    // 3. Setup Simulator
     const params = { numAnts, numIterations, alpha, beta, rho, Q: 1000000 }; 
-    currentSimulator = new AcoCvrpSimulator(depotLocation, customerData, numVehicles, vehicleCapacity, params);
+    currentSimulator = new AcoCvrpSimulator(depotLocation, customerData, fleetConfig, params);
     
     // Run the optimization asynchronously (even with a small delay)
     setTimeout(() => {
-        // 3. Run Optimization
+        // 4. Run Optimization
         const results = currentSimulator.optimize();
 
-        // 4. Update UI
+        // 5. Update UI
         updateResults(results);
         drawRoutes(currentSimulator.bestSolution, currentSimulator.customers);
 
@@ -453,9 +491,9 @@ window.resetMap = function() {
 
     // Update UI
     document.getElementById('numCustomersDisplay').textContent = '0';
-    document.getElementById('statusMessage').textContent = 'Map reset. Click on the map to place customers.';
-    document.getElementById('statusMessage').classList.remove('text-red-600', 'text-yellow-600', 'text-green-600');
-    document.getElementById('statusMessage').classList.add('text-gray-500');
+    // Call handleVehicleChange to reset status message correctly
+    handleVehicleChange(false); // Pass false to prevent resetting map again
+    
     document.getElementById('bestCost').textContent = '-';
     document.getElementById('vehiclesUsed').textContent = '-';
     document.getElementById('routeDetails').textContent = 'No routes calculated yet.';
@@ -477,13 +515,40 @@ function updateResults(results) {
     if (solution && solution.length > 0) {
         routeDetailsDiv.innerHTML = solution.map((route, index) => {
             if (route.length === 0) return '';
-            const demand = route.reduce((sum, cIdx) => sum + customerData[cIdx - 1].demand, 0);
+            
+            const vehicle = currentSimulator.vehicles[index];
+            const vType = vehicle.type.charAt(0).toUpperCase() + vehicle.type.slice(1);
+            
+            const stopCount = route.length;
             const routeStr = route.map(cIdx => `C${cIdx}`).join(' → ');
             const totalRouteCost = (currentSimulator._calculateSolutionCost([route]) / 1000).toFixed(2);
-            
+
+            // --- Calculate Total Route Time ---
+            let routeTime = 0;
+            let lastNode = 0; // Start at depot
+            for (const cIdx of route) {
+                const customer = customerData[cIdx - 1];
+                const travelTime = currentSimulator._calculateTravelTime(lastNode, cIdx, vehicle);
+                const arrivalTime = routeTime + travelTime;
+                
+                // Wait if arriving early for time window
+                const serviceStart = Math.max(arrivalTime, customer.timeWindowStart);
+                routeTime = serviceStart + customer.serviceTime;
+                lastNode = cIdx;
+            }
+            // Add time to return to depot
+            const travelTimeBack = currentSimulator._calculateTravelTime(lastNode, 0, vehicle);
+            routeTime += travelTimeBack;
+            const totalTimeHours = routeTime.toFixed(2);
+            // --- End Time Calculation ---
+
             return `
                 <p class="mb-1">
-                    <span class="text-indigo-600">V${index + 1}</span> (D: ${demand}, Cost: ${totalRouteCost} km): Depot → ${routeStr} → Depot
+                    <span class="text-indigo-600">V${vehicle.id + 1} (${vType})</span> 
+                    (Stops: ${stopCount}/${vehicle.maxStops}, 
+                     Time: ${totalTimeHours}h, 
+                     Cost: ${totalRouteCost} km): 
+                    Depot → ${routeStr} → Depot
                 </p>
             `;
         }).join('');
@@ -494,10 +559,6 @@ function updateResults(results) {
 
 /** Initializes the Google Map instance (called by Google Maps API script in index.html) */
 window.initMap = function() {
-    document.getElementById('statusMessage').textContent = 'Map ready. Click to place customers.';
-    document.getElementById('statusMessage').classList.remove('text-red-600');
-    document.getElementById('statusMessage').classList.add('text-gray-500');
-
     map = new google.maps.Map(document.getElementById("map"), {
         center: depotLocation,
         zoom: INITIAL_MAP_ZOOM,
@@ -512,15 +573,23 @@ window.initMap = function() {
 
     // Add click listener to place customers
     map.addListener('click', handleMapClick);
+
+    // Add listener for vehicle dropdown
+    document.getElementById('vehicleTypeSelect').addEventListener('change', () => handleVehicleChange(true));
+    // Set initial state from the dropdown
+    handleVehicleChange(false);
 }
 
-/** Places the fixed Depot marker (Index 0 in the location array) */
+/** * Places the fixed Depot marker (Index 0 in the location array)
+ * === MODIFIED: Changed icon to a visible yellow "home" icon ===
+ */
 function placeDepotMarker() {
     const marker = new google.maps.Marker({
         position: depotLocation,
         map: map,
         icon: {
-            url: "data:image/svg+xml;charset=UTF-8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231e3a8a'><path d='M12 2L4 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-8-3zm0 10.99l-5-5V6.3l5-1.87 5 1.87v1.69l-5 5z'/></svg>",
+            // Swapped the blue shield for a yellow home icon for better visibility
+            url: "data:image/svg+xml;charset=UTF-8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23eab308'><path d='M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8h5z'/></svg>",
             scaledSize: new google.maps.Size(32, 32),
             anchor: new google.maps.Point(16, 16)
         },
@@ -531,6 +600,16 @@ function placeDepotMarker() {
 
 /** Handles click event to place a new customer marker */
 function handleMapClick(mapsMouseEvent) {
+    const statusMessage = document.getElementById('statusMessage');
+
+    // Check if customer limit is reached
+    if (customerData.length >= maxCustomers) {
+        statusMessage.textContent = `Error: Cannot add more customers. Limit for ${selectedVehicleType} is ${maxCustomers}.`;
+        statusMessage.classList.add('text-red-600');
+        statusMessage.classList.remove('text-gray-500', 'text-yellow-600', 'text-green-600');
+        return;
+    }
+
     const lat = mapsMouseEvent.latLng.lat();
     const lng = mapsMouseEvent.latLng.lng();
 
@@ -554,15 +633,43 @@ function handleMapClick(mapsMouseEvent) {
             fillOpacity: 0.8,
             strokeWeight: 0
         },
-        title: `C${newCustomer.id} | D:${newCustomer.demand}, TW:${newCustomer.timeWindowStart.toFixed(1)}-${newCustomer.timeWindowEnd.toFixed(1)}`
+        title: `C${newCustomer.id} | TW:${newCustomer.timeWindowStart.toFixed(1)}-${newCustomer.timeWindowEnd.toFixed(1)}`
     });
     markers.push(marker);
 
     // Update UI
     document.getElementById('numCustomersDisplay').textContent = customerData.length;
-    document.getElementById('statusMessage').textContent = `Customer C${newCustomer.id} placed at (${lat.toFixed(4)}, ${lng.toFixed(4)}). Ready to run simulation.`;
-    document.getElementById('statusMessage').classList.remove('text-red-600', 'text-yellow-600', 'text-green-600');
-    document.getElementById('statusMessage').classList.add('text-gray-500');
+    statusMessage.textContent = `Customer C${newCustomer.id} placed. (${customerData.length}/${maxCustomers} stops filled).`;
+    statusMessage.classList.remove('text-red-600', 'text-yellow-600', 'text-green-600');
+    statusMessage.classList.add('text-gray-500');
+}
+
+
+/** * NEW: Handles change event from the vehicle selection dropdown
+ * Updates global state and resets map if capacity is exceeded.
+ */
+function handleVehicleChange(shouldResetMapIfConflict = false) {
+    const select = document.getElementById('vehicleTypeSelect');
+    const selectedOption = select.options[select.selectedIndex];
+    
+    selectedVehicleType = selectedOption.value;
+    const newMaxCustomers = parseInt(selectedOption.getAttribute('data-capacity'));
+    const vType = selectedOption.textContent;
+    const statusMessage = document.getElementById('statusMessage');
+
+    if (shouldResetMapIfConflict && customerData.length > newMaxCustomers) {
+        // If user plots 12 customers (Tricycle) then switches to Motorcycle (10),
+        // we must reset the map.
+        resetMap();
+        statusMessage.textContent = `Map reset. New vehicle selected: ${vType}.`;
+    } else {
+        // Otherwise, just update the state
+        statusMessage.textContent = `Vehicle set to: ${vType}. Max ${newMaxCustomers} stops.`;
+    }
+
+    maxCustomers = newMaxCustomers;
+    statusMessage.classList.remove('text-red-600', 'text-yellow-600', 'text-green-600');
+    statusMessage.classList.add('text-gray-500');
 }
 
 
