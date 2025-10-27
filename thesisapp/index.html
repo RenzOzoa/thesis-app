@@ -17,7 +17,7 @@
                 CVRP Simulation: ACO Prototype (Google Maps)
             </h1>
             <p class="text-lg text-gray-500">
-                Place customers on the map using real-world coordinates for the simulation.
+                Select a vehicle, place customers on the map, and run the simulation.
             </p>
         </header>
 
@@ -26,15 +26,17 @@
                 <h2 class="text-xl font-bold mb-4 text-indigo-700 border-b pb-2">Configuration</h2>
 
                 <div class="space-y-4">
-                    <div class="input-group">
-                        <label for="vehicleCapacity" class="block text-sm">Vehicle Capacity ($Q_{max}$)</label>
-                        <input type="number" id="vehicleCapacity" value="150" min="50" class="w-full p-2 border border-gray-300 rounded-lg mt-1 focus:border-indigo-500">
-                    </div>
-                    <div class="input-group">
-                        <label for="numVehicles" class="block text-sm">Number of Vehicles</label>
-                        <input type="number" id="numVehicles" value="4" min="1" class="w-full p-2 border border-gray-300 rounded-lg mt-1 focus:border-indigo-500">
-                    </div>
                     
+                    <h3 class="text-lg font-semibold mb-2">Vehicle Configuration</h3>
+                    <div class="input-group">
+                        <label for="vehicleTypeSelect" class="block text-sm">Select Vehicle Type</label>
+                        <select id="vehicleTypeSelect" class="w-full p-2 border border-gray-300 rounded-lg mt-1 focus:border-indigo-500">
+                            <option value="motorcycle" data-capacity="10">Motorcycle (10 parcels)</option>
+                            <option value="tricycle" data-capacity="15">Tricycle (15 parcels)</option>
+                            <option value="car" data-capacity="20">Car (20 parcels)</option>
+                            <option value="van" data-capacity="30">Delivery Van (30 parcels)</option>
+                        </select>
+                    </div>
                     <h3 class="text-lg font-semibold mt-6 mb-2 pt-2 border-t">ACO Parameters</h3>
                     <div class="input-group">
                         <label for="numAnts" class="block text-sm">Ants ($m$)</label>
@@ -100,7 +102,7 @@
     <script src="app.js"></script>
     
     <script async defer 
-        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCRJT65GMH-d5AUqLdAMnZaAZ__Igayh6s&libraries=geometry&callback=initMap">
+        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDq8swVkW31a-55BF7M4KFCEV1SOGDWkHk&libraries=geometry&callback=initMap">
     </script>
 </body>
 </html>
