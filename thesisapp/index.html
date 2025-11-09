@@ -31,12 +31,13 @@
                     <div class="input-group">
                         <label for="vehicleTypeSelect" class="block text-sm">Select Vehicle Type</label>
                         <select id="vehicleTypeSelect" class="w-full p-2 border border-gray-300 rounded-lg mt-1 focus:border-indigo-500">
-                            <option value="motorcycle" data-capacity="10">Motorcycle (10 parcels)</option>
-                            <option value="tricycle" data-capacity="15">Tricycle (15 parcels)</option>
-                            <option value="car" data-capacity="20">Car (20 parcels)</option>
-                            <option value="van" data-capacity="30">Delivery Van (30 parcels)</option>
+                            <option value="motorcycle" data-capacity="10">Motorcycle (10 stops)</option>
+                            <option value="tricycle" data-capacity="15">Tricycle (15 stops)</option>
+                            <option value="car" data-capacity="20">Car (20 stops)</option>
+                            <option value="van" data-capacity="30">Delivery Van (30 stops)</option>
                         </select>
                     </div>
+                    
                     <h3 class="text-lg font-semibold mt-6 mb-2 pt-2 border-t">ACO Parameters</h3>
                     <div class="input-group">
                         <label for="numAnts" class="block text-sm">Ants ($m$)</label>
@@ -102,7 +103,7 @@
     <script src="app.js"></script>
     
     <script async defer 
-        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDq8swVkW31a-55BF7M4KFCEV1SOGDWkHk&libraries=geometry&callback=initMap">
+        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyC5Zi25Kav1kp0c2CwV86zDWvrL2uOIAHs&libraries=routes,geometry&callback=initMap">
     </script>
 </body>
 </html>
