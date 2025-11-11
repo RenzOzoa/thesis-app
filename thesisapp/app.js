@@ -35,13 +35,16 @@ const colorPalette = [
 // --- CORE DATA STRUCTURES (Models) ---
 
 class Customer {
-    constructor(id, lat, lng, demand, timeWindowStart, timeWindowEnd, serviceTime = 0.5) {
+    /**
+     * MODIFIED: serviceTime default is now 8 minutes (8 / 60 hours)
+     */
+    constructor(id, lat, lng, demand, timeWindowStart, timeWindowEnd, serviceTime = (8 / 60)) {
         this.id = id;
         this.lat = lat;
         this.lng = lng;
         this.demand = demand; // 1 delivery point
-        this.timeWindowStart = timeWindowStart; // in hours (e.g., 9.5 for 9:30 AM)
-        this.timeWindowEnd = timeWindowEnd;     // in hours
+        this.timeWindowStart = timeWindowStart; // (No longer used in calculations, but kept in data)
+        this.timeWindowEnd = timeWindowEnd;     // (No longer used in calculations, but kept in data)
         this.serviceTime = serviceTime;         // in hours
     }
 }
@@ -75,6 +78,30 @@ const randGaussian = (mean = 0, stdDev = 1) => {
     let z = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
     return z * stdDev + mean;
 };
+
+/**
+ * --- NEW: Formats decimal hours into a "X hours Y minutes" string ---
+ */
+function formatDecimalHours(decimalHours) {
+    const totalMinutes = Math.round(decimalHours * 60);
+    
+    if (totalMinutes === 0) {
+        return '0 minutes';
+    }
+
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+
+    let parts = [];
+    if (hours > 0) {
+        parts.push(`${hours} hour${hours > 1 ? 's' : ''}`);
+    }
+    if (minutes > 0) {
+        parts.push(`${minutes} minute${minutes !== 1 ? 's' : ''}`);
+    }
+
+    return parts.join(' ');
+}
 
 
 // --- ACO CVRP CORE LOGIC (Solver) ---
@@ -116,7 +143,6 @@ class AcoCvrpSimulator {
         // --- NEW: Use pre-fetched Google Maps data ---
         this.distanceMatrix = matrixData.distances; // in meters
         this.timeMatrix = matrixData.times;         // in seconds
-        // --- REMOVED: _calculateDistanceMatrix() and environmental matrices ---
         
         // Initialize Pheromone Matrix
         this.pheromoneMatrix = Array(this.numNodes).fill(0).map(() => 
@@ -156,40 +182,31 @@ class AcoCvrpSimulator {
         return 1000000.0 / adjustedCost; // Heuristic is inverse of distance
     }
 
-    /** Calculates the probabilities for an ant to move from 'current' node to any node in 'unvisited'. */
+    /**
+     * MODIFIED: Calculates probabilities.
+     * REMOVED the Time Window (twFactor) logic.
+     */
     _calculateProbability(current, unvisited, vehicle) {
         const probabilities = {};
         let total = 0;
 
         for (const nextCustomerIndex of unvisited) {
-            const customer = this.customers[nextCustomerIndex - 1];
-            
             // 1. Capacity Constraint
             if (vehicle.route.length >= vehicle.maxStops) {
                 continue;
             }
-
-            // 2. Time Window Constraint Check
+            
+            // 2. Check for unreachable path
             const travelTime = this._calculateTravelTime(current, nextCustomerIndex, vehicle);
             if (travelTime === Infinity) {
                 continue; // Unreachable path
             }
             
-            const arrivalTime = vehicle.currentTime + travelTime;
-            let twFactor = 1.0;
-
-            if (arrivalTime > customer.timeWindowEnd) {
-                twFactor = 0.001; // Penalize late arrivals heavily
-            } else if (arrivalTime < customer.timeWindowStart) {
-                // This will be handled by waiting, so no penalty
-                twFactor = 1.0;
-            }
-
-            // 3. Probability Calculation
+            // 3. Probability Calculation (REMOVED twFactor)
             const pheromone = Math.pow(this.pheromoneMatrix[current][nextCustomerIndex], this.alpha);
             const heuristic = Math.pow(this._calculateHeuristic(current, nextCustomerIndex), this.beta);
             
-            const probability = pheromone * heuristic * twFactor;
+            const probability = pheromone * heuristic;
             
             if (probability > 0) {
                 probabilities[nextCustomerIndex] = probability;
@@ -226,7 +243,9 @@ class AcoCvrpSimulator {
         return parseInt(Object.keys(probabilities).pop());
     }
 
-    /** An ant constructs a full set of routes for all available vehicles. */
+    /** * An ant constructs a full set of routes for all available vehicles.
+     * MODIFIED: REMOVED "waiting time" for time windows.
+     */
     _constructAntSolution() {
         let unvisited = new Set(Array.from({ length: this.numNodes - 1 }, (_, i) => i + 1));
         const routes = [];
@@ -248,7 +267,7 @@ class AcoCvrpSimulator {
                 const nextCustomerIndex = this._selectNextCustomer(probabilities);
                 
                 if (nextCustomerIndex === -1) {
-                    break; // Should not happen if probabilities > 0
+                    break; 
                 }
                 
                 const customer = this.customers[nextCustomerIndex - 1];
@@ -258,9 +277,11 @@ class AcoCvrpSimulator {
                 const travelTime = this._calculateTravelTime(current, nextCustomerIndex, vehicle);
                 const arrivalTime = vehicle.currentTime + travelTime;
                 
-                // Service start time (wait if early)
-                const serviceStart = Math.max(arrivalTime, customer.timeWindowStart);
-                vehicle.currentTime = serviceStart + customer.serviceTime;
+                // --- MODIFICATION ---
+                // REMOVED: const serviceStart = Math.max(arrivalTime, customer.timeWindowStart);
+                // The ant no longer waits.
+                vehicle.currentTime = arrivalTime + customer.serviceTime;
+                // --- END MODIFICATION ---
                 
                 unvisited.delete(nextCustomerIndex);
                 current = nextCustomerIndex;
@@ -360,22 +381,25 @@ class AcoCvrpSimulator {
 
 // --- UI, MAP INTEGRATION, AND HANDLERS ---
 
-/** Creates a new customer with random demand and time window */
+/** * Creates a new customer with random demand and time window
+ * MODIFIED: The serviceTime is now pulled from the Customer class default (8 mins)
+ */
 function createRandomCustomer(lat, lng) {
     const id = nextCustomerId++;
     const demand = 1; // Each customer is 1 delivery point
     
+    // Time windows are still generated for the data model, but not used in time calculations
     const baseHour = Math.floor(Math.random() * 6) + 9; // 9 AM (9) to 3 PM (15)
     let twStart = baseHour + randGaussian(0, 1.5);
     twStart = Math.max(8, Math.min(16, twStart)); // 8 AM to 4 PM
     const twEnd = twStart + Math.floor(Math.random() * 2) + 2; // 2-4 hour window
 
+    // The 'serviceTime' parameter is no longer passed, so it uses the new default
     return new Customer(id, lat, lng, demand, twStart, twEnd);
 }
 
 /**
  * --- NEW: Step 1 - Fetch Distance and Time Matrices from Google ---
- * This function is called by runSimulation()
  */
 function fetchDistanceMatrix(locations) {
     const statusMessage = document.getElementById('statusMessage');
@@ -396,7 +420,6 @@ function fetchDistanceMatrix(locations) {
                 console.error('Distance Matrix Error:', status);
                 statusMessage.textContent = `Error fetching road data: ${status}. Using straight-line distance as fallback.`;
                 statusMessage.classList.add('text-red-600');
-                // TODO: Add a fallback to straight-line distance if API fails
                 resolve(null); // Indicate failure
                 return;
             }
@@ -521,8 +544,7 @@ window.resetMap = function() {
 
 
 /** * Updates the metrics and route details panel.
- * MODIFIED: This function now inherently uses real time,
- * because the simulator's _calculateTravelTime function was updated.
+ * MODIFIED: Uses new formatDecimalHours() for time display.
  */
 function updateResults(results) {
     const solution = results.solution;
@@ -542,33 +564,31 @@ function updateResults(results) {
             
             const stopCount = route.length;
             const routeStr = route.map(cIdx => `C${cIdx}`).join(' → ');
-            // This cost calculation is correct, as _calculateSolutionCost uses _calculateAdjustedCost
             const totalRouteCost = (currentSimulator._calculateSolutionCost([route]) / 1000).toFixed(2);
 
-            // --- Calculate Total Route Time (using real data) ---
+            // --- MODIFIED: Calculate Total Route Time (No waiting) ---
             let routeTime = 0; // in hours
             let lastNode = 0; // Depot
             for (const cIdx of route) {
                 const customer = customerData[cIdx - 1];
-                // This now returns real road time in hours
                 const travelTime = currentSimulator._calculateTravelTime(lastNode, cIdx, vehicle);
                 const arrivalTime = routeTime + travelTime;
                 
-                const serviceStart = Math.max(arrivalTime, customer.timeWindowStart);
-                routeTime = serviceStart + customer.serviceTime;
+                routeTime = arrivalTime + customer.serviceTime; // No waiting
                 lastNode = cIdx;
             }
-            // Add time to return to depot
             const travelTimeBack = currentSimulator._calculateTravelTime(lastNode, 0, vehicle);
             routeTime += travelTimeBack;
-            const totalTimeHours = routeTime.toFixed(2);
-            // --- End Time Calculation ---
+            
+            // --- NEW: Use the time formatter ---
+            const totalTimeString = formatDecimalHours(routeTime);
+            // --- END NEW ---
 
             return `
                 <p class="mb-1">
                     <span class="text-indigo-600">V${vehicle.id + 1} (${vType})</span> 
                     (Stops: ${stopCount}/${vehicle.maxStops}, 
-                     Time: ${totalTimeHours}h, 
+                     Time: ${totalTimeString}, 
                      Cost: ${totalRouteCost} km): 
                     Depot → ${routeStr} → Depot
                 </p>
@@ -581,8 +601,6 @@ function updateResults(results) {
 
 /** Initializes the Google Map instance */
 window.initMap = function() {
-    // *** THIS IS THE LINE WITH THE FIX ***
-    // I removed the accidental second "new"
     map = new google.maps.Map(document.getElementById("map"), {
         center: depotLocation,
         zoom: INITIAL_MAP_ZOOM,
@@ -654,7 +672,8 @@ function handleMapClick(mapsMouseEvent) {
             fillOpacity: 0.8,
             strokeWeight: 0
         },
-        title: `C${newCustomer.id} | TW:${newCustomer.timeWindowStart.toFixed(1)}-${newCustomer.timeWindowEnd.toFixed(1)}`
+        // Title no longer shows time window as it's not used
+        title: `C${newCustomer.id}`
     });
     markers.push(marker);
 
