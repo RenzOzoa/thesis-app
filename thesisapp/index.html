@@ -31,10 +31,10 @@
                     <div class="input-group">
                         <label for="vehicleTypeSelect" class="block text-sm">Select Vehicle Type</label>
                         <select id="vehicleTypeSelect" class="w-full p-2 border border-gray-300 rounded-lg mt-1 focus:border-indigo-500">
-                            <option value="motorcycle" data-capacity="10">Motorcycle (10 stops)</option>
-                            <option value="tricycle" data-capacity="15">Tricycle (15 stops)</option>
-                            <option value="car" data-capacity="20">Car (20 stops)</option>
-                            <option value="van" data-capacity="30">Delivery Van (30 stops)</option>
+                            <option value="motorcycle" data-capacity="20">Motorcycle (20 stops)</option>
+                            <option value="tricycle" data-capacity="25">Tricycle (25 stops)</option>
+                            <option value="car" data-capacity="30">Car (30 stops)</option>
+                            <option value="van" data-capacity="40">Delivery Van (40 stops)</option>
                         </select>
                     </div>
                     
@@ -85,12 +85,12 @@
                 <div id="metricsOutput" class="space-y-3 p-4 bg-gray-100 rounded-lg">
                     <p class="text-base font-semibold text-gray-800">Status: <span id="statusMessage" class="font-normal text-gray-500">Loading map...</span></p>
                     <p class="text-base font-semibold text-gray-800">Customers Placed ($N$): <span id="numCustomersDisplay" class="font-normal text-indigo-600">0</span></p>
-                    <p class="text-base font-semibold text-gray-800">Best Total Cost (Meters): <span id="bestCost" class="font-normal text-green-600">-</span></p>
-                    <p class="text-base font-semibold text-gray-800">Vehicles Used: <span id="vehiclesUsed" class="font-normal text-blue-600">-</span></p>
+                    <p class="text-base font-semibold text-gray-800">Total Distance (Km): <span id="bestCost" class="font-normal text-green-600">-</span></p>
+                    <p class="text-base font-semibold text-gray-800">Vehicle Used: <span id="vehiclesUsed" class="font-normal text-blue-600">-</span></p>
                 </div>
 
                 <div class="mt-6">
-                    <h3 class="text-lg font-semibold mb-2 text-gray-700">Detailed Routes</h3>
+                    <h3 class="text-lg font-semibold mb-2 text-gray-700">Detailed Routes (Time is accurate)</h3>
                     <div id="routeDetails" class="bg-white p-3 border rounded-lg max-h-40 overflow-y-auto text-sm font-mono text-gray-700">
                         No routes calculated yet.
                     </div>
