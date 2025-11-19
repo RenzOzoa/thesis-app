@@ -5,10 +5,10 @@ const INITIAL_MAP_ZOOM = 13;
 
 // --- Heterogeneous Fleet Properties ---
 const VEHICLE_PROPERTIES = {
-    motorcycle: { speed: 40, capacity: 10 },
-    tricycle: { speed: 35, capacity: 15 },
-    car: { speed: 40, capacity: 20 },
-    van: { speed: 40, capacity: 30 }
+    motorcycle: { speed: 40, capacity: 20 },
+    tricycle: { speed: 35, capacity: 25 },
+    car: { speed: 40, capacity: 30 },
+    van: { speed: 40, capacity: 40 }
 };
 
 // Global State
@@ -19,7 +19,7 @@ let currentSimulator = null;
 let customerData = [];
 let nextCustomerId = 1;
 let selectedVehicleType = 'motorcycle';
-let maxCustomers = 10;
+let maxCustomers = 20; // Default max updated to match motorcycle capacity
 
 // --- NEW: Google Maps Services ---
 let directionsService;
@@ -36,9 +36,9 @@ const colorPalette = [
 
 class Customer {
     /**
-     * MODIFIED: serviceTime default is now 8 minutes (8 / 60 hours)
+     * MODIFIED: serviceTime default is now 5 minutes (5 / 60 hours)
      */
-    constructor(id, lat, lng, demand, timeWindowStart, timeWindowEnd, serviceTime = (8 / 60)) {
+    constructor(id, lat, lng, demand, timeWindowStart, timeWindowEnd, serviceTime = (5 / 60)) {
         this.id = id;
         this.lat = lat;
         this.lng = lng;
@@ -80,7 +80,7 @@ const randGaussian = (mean = 0, stdDev = 1) => {
 };
 
 /**
- * --- NEW: Formats decimal hours into a "X hours Y minutes" string ---
+ * Formats decimal hours into a "X hours Y minutes" string
  */
 function formatDecimalHours(decimalHours) {
     const totalMinutes = Math.round(decimalHours * 60);
@@ -108,7 +108,7 @@ function formatDecimalHours(decimalHours) {
 
 class AcoCvrpSimulator {
     /**
-     * MODIFIED: Accepts matrixData from the Google Distance Matrix API.
+     * Accepts matrixData from the Google Distance Matrix API.
      */
     constructor(depotLocation, customers, fleetConfig, params, matrixData) {
         this.depotLocation = depotLocation;
@@ -140,7 +140,7 @@ class AcoCvrpSimulator {
         this.locations = [depotLocation].concat(this.customers.map(c => ({ lat: c.lat, lng: c.lng })));
         this.numNodes = this.locations.length;
         
-        // --- NEW: Use pre-fetched Google Maps data ---
+        // Use pre-fetched Google Maps data
         this.distanceMatrix = matrixData.distances; // in meters
         this.timeMatrix = matrixData.times;         // in seconds
         
@@ -151,10 +151,11 @@ class AcoCvrpSimulator {
         
         this.bestSolution = null;
         this.bestCost = Infinity;
+        this.convergenceIteration = 0; // Track when convergence happens
     }
 
     /**
-     * MODIFIED: Calculates travel time in hours from pre-fetched Google data.
+     * Calculates travel time in hours from pre-fetched Google data.
      */
     _calculateTravelTime(i, j, vehicle) {
         const baseTimeSeconds = this.timeMatrix[i][j];
@@ -166,7 +167,7 @@ class AcoCvrpSimulator {
     }
     
     /**
-     * MODIFIED: Calculates cost (distance in meters) from pre-fetched Google data.
+     * Calculates cost (distance in meters) from pre-fetched Google data.
      */
     _calculateAdjustedCost(i, j) {
         // Cost is the real road distance in meters
@@ -183,8 +184,7 @@ class AcoCvrpSimulator {
     }
 
     /**
-     * MODIFIED: Calculates probabilities.
-     * REMOVED the Time Window (twFactor) logic.
+     * Calculates probabilities.
      */
     _calculateProbability(current, unvisited, vehicle) {
         const probabilities = {};
@@ -202,7 +202,7 @@ class AcoCvrpSimulator {
                 continue; // Unreachable path
             }
             
-            // 3. Probability Calculation (REMOVED twFactor)
+            // 3. Probability Calculation
             const pheromone = Math.pow(this.pheromoneMatrix[current][nextCustomerIndex], this.alpha);
             const heuristic = Math.pow(this._calculateHeuristic(current, nextCustomerIndex), this.beta);
             
@@ -243,9 +243,7 @@ class AcoCvrpSimulator {
         return parseInt(Object.keys(probabilities).pop());
     }
 
-    /** * An ant constructs a full set of routes for all available vehicles.
-     * MODIFIED: REMOVED "waiting time" for time windows.
-     */
+    /** An ant constructs a full set of routes for all available vehicles. */
     _constructAntSolution() {
         let unvisited = new Set(Array.from({ length: this.numNodes - 1 }, (_, i) => i + 1));
         const routes = [];
@@ -277,11 +275,7 @@ class AcoCvrpSimulator {
                 const travelTime = this._calculateTravelTime(current, nextCustomerIndex, vehicle);
                 const arrivalTime = vehicle.currentTime + travelTime;
                 
-                // --- MODIFICATION ---
-                // REMOVED: const serviceStart = Math.max(arrivalTime, customer.timeWindowStart);
-                // The ant no longer waits.
                 vehicle.currentTime = arrivalTime + customer.serviceTime;
-                // --- END MODIFICATION ---
                 
                 unvisited.delete(nextCustomerIndex);
                 current = nextCustomerIndex;
@@ -348,6 +342,8 @@ class AcoCvrpSimulator {
     optimize() {
         const startTime = performance.now();
         let iterationHistory = [];
+        // Track the last best cost to determine convergence
+        let lastBestCost = Infinity;
 
         for (let iter = 0; iter < this.numIterations; iter++) {
             const iterationSolutions = [];
@@ -360,6 +356,8 @@ class AcoCvrpSimulator {
                 if (cost < this.bestCost) {
                     this.bestCost = cost;
                     this.bestSolution = routes;
+                    // If we found a new best cost, update the convergence iteration
+                    this.convergenceIteration = iter + 1; 
                 }
             }
             
@@ -372,6 +370,7 @@ class AcoCvrpSimulator {
         return {
             solution: this.bestSolution,
             cost: this.bestCost,
+            convergenceIteration: this.convergenceIteration, 
             time: (endTime - startTime) / 1000,
             history: iterationHistory
         };
@@ -381,70 +380,96 @@ class AcoCvrpSimulator {
 
 // --- UI, MAP INTEGRATION, AND HANDLERS ---
 
-/** * Creates a new customer with random demand and time window
- * MODIFIED: The serviceTime is now pulled from the Customer class default (8 mins)
- */
+/** Creates a new customer with random demand and time window */
 function createRandomCustomer(lat, lng) {
     const id = nextCustomerId++;
     const demand = 1; // Each customer is 1 delivery point
     
-    // Time windows are still generated for the data model, but not used in time calculations
-    const baseHour = Math.floor(Math.random() * 6) + 9; // 9 AM (9) to 3 PM (15)
+    const baseHour = Math.floor(Math.random() * 6) + 9; 
     let twStart = baseHour + randGaussian(0, 1.5);
-    twStart = Math.max(8, Math.min(16, twStart)); // 8 AM to 4 PM
-    const twEnd = twStart + Math.floor(Math.random() * 2) + 2; // 2-4 hour window
+    twStart = Math.max(8, Math.min(16, twStart)); 
+    const twEnd = twStart + Math.floor(Math.random() * 2) + 2; 
 
-    // The 'serviceTime' parameter is no longer passed, so it uses the new default
+    // The 'serviceTime' parameter uses default 5 mins
     return new Customer(id, lat, lng, demand, twStart, twEnd);
 }
 
 /**
- * --- NEW: Step 1 - Fetch Distance and Time Matrices from Google ---
+ * --- REWRITTEN Step 1: Chunked Fetching for Distance Matrix ---
+ * This solves the MAX_ELEMENTS_EXCEEDED error by splitting the request.
  */
-function fetchDistanceMatrix(locations) {
+async function fetchDistanceMatrix(locations) {
     const statusMessage = document.getElementById('statusMessage');
-    statusMessage.textContent = 'Fetching road network data from Google...';
+    statusMessage.textContent = 'Step 1/3: Fetching road network data...';
     statusMessage.classList.add('text-yellow-600');
     statusMessage.classList.remove('text-gray-500');
     
-    return new Promise((resolve) => {
-        const request = {
-            origins: locations,
-            destinations: locations,
-            travelMode: google.maps.TravelMode.DRIVING,
-            unitSystem: google.maps.UnitSystem.METRIC,
-        };
+    const n = locations.length;
+    // Initialize n x n matrices with Infinity
+    const distanceMatrix = Array(n).fill(0).map(() => Array(n).fill(Infinity));
+    const timeMatrix = Array(n).fill(0).map(() => Array(n).fill(Infinity));
 
-        distanceMatrixService.getDistanceMatrix(request, (response, status) => {
-            if (status !== 'OK') {
-                console.error('Distance Matrix Error:', status);
-                statusMessage.textContent = `Error fetching road data: ${status}. Using straight-line distance as fallback.`;
-                statusMessage.classList.add('text-red-600');
-                resolve(null); // Indicate failure
-                return;
-            }
+    // CHUNK_SIZE: 10 means a 10x10 request = 100 elements. 
+    // This fits exactly into the 100 element limit per request.
+    const CHUNK_SIZE = 10; 
 
-            const distanceMatrix = [];
-            const timeMatrix = [];
+    // Generate list of tasks (sub-matrix requests)
+    const tasks = [];
+    for (let i = 0; i < n; i += CHUNK_SIZE) {
+        for (let j = 0; j < n; j += CHUNK_SIZE) {
+            tasks.push({ rowStart: i, colStart: j });
+        }
+    }
 
-            response.rows.forEach((row, i) => {
-                distanceMatrix[i] = [];
-                timeMatrix[i] = [];
-                row.elements.forEach((element, j) => {
-                    if (element.status === 'OK') {
-                        distanceMatrix[i][j] = element.distance.value; // meters
-                        timeMatrix[i][j] = element.duration.value;     // seconds
-                    } else {
-                        // Handle unreachable locations
-                        distanceMatrix[i][j] = Infinity;
-                        timeMatrix[i][j] = Infinity;
-                    }
+    // Helper function to process one chunk
+    const processChunk = (task) => {
+        return new Promise((resolve) => {
+            const origins = locations.slice(task.rowStart, task.rowStart + CHUNK_SIZE);
+            const destinations = locations.slice(task.colStart, task.colStart + CHUNK_SIZE);
+
+            const request = {
+                origins: origins,
+                destinations: destinations,
+                travelMode: google.maps.TravelMode.DRIVING,
+                unitSystem: google.maps.UnitSystem.METRIC,
+            };
+
+            distanceMatrixService.getDistanceMatrix(request, (response, status) => {
+                if (status !== 'OK') {
+                    console.error('Distance Matrix Chunk Error:', status);
+                    // If a chunk fails, we just leave those values as Infinity (unreachable)
+                    resolve(); 
+                    return;
+                }
+
+                response.rows.forEach((row, rIdx) => {
+                    row.elements.forEach((element, cIdx) => {
+                        const actualRow = task.rowStart + rIdx;
+                        const actualCol = task.colStart + cIdx;
+
+                        if (element.status === 'OK') {
+                            distanceMatrix[actualRow][actualCol] = element.distance.value;
+                            timeMatrix[actualRow][actualCol] = element.duration.value;
+                        }
+                    });
                 });
+                resolve();
             });
-            
-            resolve({ distances: distanceMatrix, times: timeMatrix });
         });
-    });
+    };
+
+    // Execute all chunk requests (sequentially or parallel)
+    // Using Promise.all is faster but might hit QPS limits if n is huge.
+    // For <50 nodes, Promise.all is usually fine.
+    try {
+        await Promise.all(tasks.map(processChunk));
+        return { distances: distanceMatrix, times: timeMatrix };
+    } catch (err) {
+        console.error("Matrix Fetch Failed", err);
+        statusMessage.textContent = 'Error fetching data. Check console.';
+        statusMessage.classList.add('text-red-600');
+        return null;
+    }
 }
 
 
@@ -469,17 +494,16 @@ window.runSimulation = async function() {
     statusMessage.classList.remove('text-gray-500', 'text-green-600', 'text-red-600');
     
     try {
-        // --- STEP 1: Fetch Real Road Data ---
+        // --- STEP 1: Fetch Real Road Data (Chunked) ---
         const locations = [depotLocation, ...customerData.map(c => ({ lat: c.lat, lng: c.lng }))];
         const matrixData = await fetchDistanceMatrix(locations);
 
         if (!matrixData) {
-            // Error was already handled by fetchDistanceMatrix
             btn.disabled = false;
             return;
         }
         
-        statusMessage.textContent = `Running optimization for ${numCustomers} customers...`;
+        statusMessage.textContent = `Step 2/3: Running optimization for ${numCustomers} customers...`;
         
         // --- STEP 2: Run ACO with Real Data ---
         const vehicleType = document.getElementById('vehicleTypeSelect').value;
@@ -545,18 +569,34 @@ window.resetMap = function() {
 
 /** * Updates the metrics and route details panel.
  * MODIFIED: Uses new formatDecimalHours() for time display.
+ * MODIFIED: Updates labels for "Total Distance" and "Vehicle Used".
+ * MODIFIED: Adds Convergence Iteration output.
  */
 function updateResults(results) {
     const solution = results.solution;
     const cost = results.cost; // This is now real road distance (meters)
-    const vehiclesUsed = solution.filter(r => r.length > 0).length;
+    
+    // MODIFIED: Change text for Total Distance (previously Best Cost)
+    const bestCostEl = document.getElementById('bestCost');
+    if (bestCostEl) {
+        bestCostEl.textContent = (cost / 1000).toFixed(2) + ' km';
+    }
 
-    document.getElementById('bestCost').textContent = (cost / 1000).toFixed(2) + ' km';
-    document.getElementById('vehiclesUsed').textContent = `${vehiclesUsed} / ${currentSimulator.numVehicles}`;
+    // MODIFIED: Change "Vehicles Used" to "Vehicle Used" and show type
+    const vehiclesUsedEl = document.getElementById('vehiclesUsed');
+    if (vehiclesUsedEl) {
+         // Get the selected vehicle type name (capitalized)
+        const vType = selectedVehicleType.charAt(0).toUpperCase() + selectedVehicleType.slice(1);
+        vehiclesUsedEl.textContent = vType;
+    }
 
+    // NEW: Add Convergence Iteration to the output
     const routeDetailsDiv = document.getElementById('routeDetails');
+    
     if (solution && solution.length > 0) {
-        routeDetailsDiv.innerHTML = solution.map((route, index) => {
+        const convergenceMsg = `<p class="mb-3 font-bold text-green-700">Converged in ${results.convergenceIteration} Iterations</p>`;
+        
+        const routesHtml = solution.map((route, index) => {
             if (route.length === 0) return '';
             
             const vehicle = currentSimulator.vehicles[index];
@@ -566,7 +606,6 @@ function updateResults(results) {
             const routeStr = route.map(cIdx => `C${cIdx}`).join(' → ');
             const totalRouteCost = (currentSimulator._calculateSolutionCost([route]) / 1000).toFixed(2);
 
-            // --- MODIFIED: Calculate Total Route Time (No waiting) ---
             let routeTime = 0; // in hours
             let lastNode = 0; // Depot
             for (const cIdx of route) {
@@ -580,20 +619,21 @@ function updateResults(results) {
             const travelTimeBack = currentSimulator._calculateTravelTime(lastNode, 0, vehicle);
             routeTime += travelTimeBack;
             
-            // --- NEW: Use the time formatter ---
             const totalTimeString = formatDecimalHours(routeTime);
-            // --- END NEW ---
 
             return `
                 <p class="mb-1">
                     <span class="text-indigo-600">V${vehicle.id + 1} (${vType})</span> 
                     (Stops: ${stopCount}/${vehicle.maxStops}, 
                      Time: ${totalTimeString}, 
-                     Cost: ${totalRouteCost} km): 
+                     Distance: ${totalRouteCost} km): 
                     Depot → ${routeStr} → Depot
                 </p>
             `;
         }).join('');
+        
+        routeDetailsDiv.innerHTML = convergenceMsg + routesHtml;
+        
     } else {
         routeDetailsDiv.textContent = 'Failed to find a feasible solution or no routes generated.';
     }
@@ -672,7 +712,6 @@ function handleMapClick(mapsMouseEvent) {
             fillOpacity: 0.8,
             strokeWeight: 0
         },
-        // Title no longer shows time window as it's not used
         title: `C${newCustomer.id}`
     });
     markers.push(marker);
