@@ -1,6 +1,6 @@
 // === CONFIGURATION AND GLOBAL STATE ===
-// Fixed depot location: Barangay San Manuel, Puerto Princesa, Philippines
-const depotLocation = { lat: 9.7735, lng: 118.7524 }; 
+// Fixed depot location: Flash Express, Puerto Princesa, Philippines
+const depotLocation = { lat: 9.7408, lng: 118.7316 }; 
 const INITIAL_MAP_ZOOM = 13;
 
 // --- Heterogeneous Fleet Properties ---
