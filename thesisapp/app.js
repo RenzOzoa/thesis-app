@@ -8,7 +8,7 @@ const VEHICLE_PROPERTIES = {
     motorcycle: { speed: 40, capacity: 20 },
     tricycle: { speed: 35, capacity: 25 },
     car: { speed: 40, capacity: 30 },
-    van: { speed: 40, capacity: 40 }
+    van: { speed: 40, capacity: 50 } 
 };
 
 // Global State
@@ -19,7 +19,7 @@ let currentSimulator = null;
 let customerData = [];
 let nextCustomerId = 1;
 let selectedVehicleType = 'motorcycle';
-let maxCustomers = 20; // Default max updated to match motorcycle capacity
+let maxCustomers = 50; 
 
 // --- NEW: Google Maps Services ---
 let directionsService;
@@ -35,17 +35,15 @@ const colorPalette = [
 // --- CORE DATA STRUCTURES (Models) ---
 
 class Customer {
-    /**
-     * MODIFIED: serviceTime default is now 5 minutes (5 / 60 hours)
-     */
+    // Service time default: 5 minutes (5/60 hours)
     constructor(id, lat, lng, demand, timeWindowStart, timeWindowEnd, serviceTime = (5 / 60)) {
         this.id = id;
         this.lat = lat;
         this.lng = lng;
-        this.demand = demand; // 1 delivery point
-        this.timeWindowStart = timeWindowStart; // (No longer used in calculations, but kept in data)
-        this.timeWindowEnd = timeWindowEnd;     // (No longer used in calculations, but kept in data)
-        this.serviceTime = serviceTime;         // in hours
+        this.demand = demand; 
+        this.timeWindowStart = timeWindowStart; 
+        this.timeWindowEnd = timeWindowEnd;     
+        this.serviceTime = serviceTime;         
     }
 }
 
@@ -53,9 +51,9 @@ class Vehicle {
     constructor(id, type, speed, maxStops) {
         this.id = id;
         this.type = type;
-        this.speed = speed; // km/h
+        this.speed = speed; 
         this.maxStops = maxStops;
-        this.currentTime = 0; // in hours
+        this.currentTime = 0; 
         this.route = [];
         this.currentLocationIndex = 0;
     }
@@ -70,7 +68,6 @@ class Vehicle {
 
 // --- UTILITY FUNCTIONS ---
 
-/** Generates a random number following a Gaussian (Normal) distribution. */
 const randGaussian = (mean = 0, stdDev = 1) => {
     let u = 0, v = 0;
     while (u === 0) u = Math.random(); 
@@ -79,27 +76,14 @@ const randGaussian = (mean = 0, stdDev = 1) => {
     return z * stdDev + mean;
 };
 
-/**
- * Formats decimal hours into a "X hours Y minutes" string
- */
 function formatDecimalHours(decimalHours) {
     const totalMinutes = Math.round(decimalHours * 60);
-    
-    if (totalMinutes === 0) {
-        return '0 minutes';
-    }
-
+    if (totalMinutes === 0) return '0 minutes';
     const hours = Math.floor(totalMinutes / 60);
     const minutes = totalMinutes % 60;
-
     let parts = [];
-    if (hours > 0) {
-        parts.push(`${hours} hour${hours > 1 ? 's' : ''}`);
-    }
-    if (minutes > 0) {
-        parts.push(`${minutes} minute${minutes !== 1 ? 's' : ''}`);
-    }
-
+    if (hours > 0) parts.push(`${hours} hour${hours > 1 ? 's' : ''}`);
+    if (minutes > 0) parts.push(`${minutes} minute${minutes !== 1 ? 's' : ''}`);
     return parts.join(' ');
 }
 
@@ -107,14 +91,10 @@ function formatDecimalHours(decimalHours) {
 // --- ACO CVRP CORE LOGIC (Solver) ---
 
 class AcoCvrpSimulator {
-    /**
-     * Accepts matrixData from the Google Distance Matrix API.
-     */
     constructor(depotLocation, customers, fleetConfig, params, matrixData) {
         this.depotLocation = depotLocation;
         this.customers = customers;
         
-        // Build vehicle fleet
         this.vehicles = [];
         let vId = 0;
         for (const [type, count] of Object.entries(fleetConfig)) {
@@ -127,7 +107,6 @@ class AcoCvrpSimulator {
         }
         this.numVehicles = this.vehicles.length;
 
-        // ACO Parameters
         this.numAnts = params.numAnts;
         this.numIterations = params.numIterations;
         this.alpha = params.alpha;
@@ -136,73 +115,47 @@ class AcoCvrpSimulator {
         this.Q = params.Q;
         this.tau0 = params.tau0 || 0.1;
         
-        // Locations (0: Depot, 1..N: Customers)
         this.locations = [depotLocation].concat(this.customers.map(c => ({ lat: c.lat, lng: c.lng })));
         this.numNodes = this.locations.length;
         
-        // Use pre-fetched Google Maps data
-        this.distanceMatrix = matrixData.distances; // in meters
-        this.timeMatrix = matrixData.times;         // in seconds
+        this.distanceMatrix = matrixData.distances; 
+        this.timeMatrix = matrixData.times;         
         
-        // Initialize Pheromone Matrix
         this.pheromoneMatrix = Array(this.numNodes).fill(0).map(() => 
             Array(this.numNodes).fill(this.tau0)
         );
         
         this.bestSolution = null;
         this.bestCost = Infinity;
-        this.convergenceIteration = 0; // Track when convergence happens
+        this.convergenceIteration = 0;
     }
 
-    /**
-     * Calculates travel time in hours from pre-fetched Google data.
-     */
     _calculateTravelTime(i, j, vehicle) {
         const baseTimeSeconds = this.timeMatrix[i][j];
-        if (baseTimeSeconds === Infinity) {
-            return Infinity;
-        }
-        // Convert real travel time from seconds to hours
+        if (baseTimeSeconds === Infinity) return Infinity;
         return baseTimeSeconds / 3600.0;
     }
     
-    /**
-     * Calculates cost (distance in meters) from pre-fetched Google data.
-     */
     _calculateAdjustedCost(i, j) {
-        // Cost is the real road distance in meters
         return this.distanceMatrix[i][j];
     }
 
-    /** Calculates the heuristic value ($\eta_{ij}$), which is the inverse of the adjusted cost. */
     _calculateHeuristic(i, j) {
         const adjustedCost = this._calculateAdjustedCost(i, j);
-        if (adjustedCost === 0 || adjustedCost === Infinity) {
-            return 0; // Avoid division by zero or using bad paths
-        }
-        return 1000000.0 / adjustedCost; // Heuristic is inverse of distance
+        if (adjustedCost === 0 || adjustedCost === Infinity) return 0; 
+        return 1000000.0 / adjustedCost; 
     }
 
-    /**
-     * Calculates probabilities.
-     */
     _calculateProbability(current, unvisited, vehicle) {
         const probabilities = {};
         let total = 0;
 
         for (const nextCustomerIndex of unvisited) {
-            // 1. Capacity Constraint
-            if (vehicle.route.length >= vehicle.maxStops) {
-                continue;
-            }
+            if (vehicle.route.length >= vehicle.maxStops) continue;
             
-            // 2. Check for unreachable path
             const travelTime = this._calculateTravelTime(current, nextCustomerIndex, vehicle);
-            if (travelTime === Infinity) {
-                continue; // Unreachable path
-            }
+            if (travelTime === Infinity) continue; 
             
-            // 3. Probability Calculation
             const pheromone = Math.pow(this.pheromoneMatrix[current][nextCustomerIndex], this.alpha);
             const heuristic = Math.pow(this._calculateHeuristic(current, nextCustomerIndex), this.beta);
             
@@ -214,7 +167,6 @@ class AcoCvrpSimulator {
             }
         }
 
-        // Normalize probabilities
         if (total > 0) {
             for (const customerIndex in probabilities) {
                 probabilities[customerIndex] /= total;
@@ -223,27 +175,18 @@ class AcoCvrpSimulator {
         return probabilities;
     }
 
-    /** Selects the next customer index based on the calculated probabilities (Roulette Wheel selection). */
     _selectNextCustomer(probabilities) {
-        if (Object.keys(probabilities).length === 0) {
-            return -1;
-        }
-        
+        if (Object.keys(probabilities).length === 0) return -1;
         const rand = Math.random();
         let cumulative = 0;
-        
         for (const customerIndexStr in probabilities) {
             const customerIndex = parseInt(customerIndexStr);
             cumulative += probabilities[customerIndexStr];
-            if (rand <= cumulative) {
-                return customerIndex;
-            }
+            if (rand <= cumulative) return customerIndex;
         }
-        // Fallback for floating point errors
         return parseInt(Object.keys(probabilities).pop());
     }
 
-    /** An ant constructs a full set of routes for all available vehicles. */
     _constructAntSolution() {
         let unvisited = new Set(Array.from({ length: this.numNodes - 1 }, (_, i) => i + 1));
         const routes = [];
@@ -252,85 +195,63 @@ class AcoCvrpSimulator {
         
         for (const vehicle of this.vehicles) {
             if (unvisited.size === 0) break;
-            
-            let current = 0; // Start at depot (index 0)
+            let current = 0; 
             
             while (unvisited.size > 0) {
                 const probabilities = this._calculateProbability(current, Array.from(unvisited), vehicle);
-                
-                if (Object.keys(probabilities).length === 0) {
-                    break; // No valid moves left
-                }
+                if (Object.keys(probabilities).length === 0) break; 
                 
                 const nextCustomerIndex = this._selectNextCustomer(probabilities);
-                
-                if (nextCustomerIndex === -1) {
-                    break; 
-                }
+                if (nextCustomerIndex === -1) break; 
                 
                 const customer = this.customers[nextCustomerIndex - 1];
-                
                 vehicle.route.push(nextCustomerIndex);
                 
                 const travelTime = this._calculateTravelTime(current, nextCustomerIndex, vehicle);
                 const arrivalTime = vehicle.currentTime + travelTime;
-                
                 vehicle.currentTime = arrivalTime + customer.serviceTime;
                 
                 unvisited.delete(nextCustomerIndex);
                 current = nextCustomerIndex;
             }
-
-            // Close route: return to depot (0)
             if (vehicle.route.length > 0) {
                 const travelTimeBack = this._calculateTravelTime(current, 0, vehicle);
                 vehicle.currentTime += travelTimeBack;
             }
             routes.push(vehicle.route);
         }
-        
         return routes;
     }
     
-    /** Calculates the total cost (adjusted distance in meters) for a set of routes. */
     _calculateSolutionCost(routes) {
         let totalCost = 0;
-        
         for (const route of routes) {
             if (!route || route.length === 0) continue;
-            
-            let prev = 0; // Depot (index 0)
+            let prev = 0; 
             for (const customerIndex of route) {
                 totalCost += this._calculateAdjustedCost(prev, customerIndex);
                 prev = customerIndex;
             }
-            // Add cost of returning to depot
             totalCost += this._calculateAdjustedCost(prev, 0);
         }
         return totalCost; 
     }
 
-    /** Applies pheromone evaporation and deposition. */
     _updatePheromones(allSolutions) {
-        // 1. Evaporation
         for (let i = 0; i < this.numNodes; i++) {
             for (let j = 0; j < this.numNodes; j++) {
                 this.pheromoneMatrix[i][j] *= (1 - this.rho);
             }
         }
-        
-        // 2. Deposition (using only the best solution found in this iteration)
         const bestIterSolution = allSolutions.reduce((best, current) => current.cost < best.cost ? current : best);
-        
         const deposit = this.Q / bestIterSolution.cost; 
         
         for (const route of bestIterSolution.routes) {
             if (!route || route.length === 0) continue;
-            
             let prev = 0;
             for (const customerIndex of route) {
                 this.pheromoneMatrix[prev][customerIndex] += deposit;
-                this.pheromoneMatrix[customerIndex][prev] += deposit; // Symmetric
+                this.pheromoneMatrix[customerIndex][prev] += deposit; 
                 prev = customerIndex;
             }
             this.pheromoneMatrix[prev][0] += deposit;
@@ -338,16 +259,12 @@ class AcoCvrpSimulator {
         }
     }
 
-    /** Executes the main ACO optimization loop. */
     optimize() {
         const startTime = performance.now();
         let iterationHistory = [];
-        // Track the last best cost to determine convergence
-        let lastBestCost = Infinity;
 
         for (let iter = 0; iter < this.numIterations; iter++) {
             const iterationSolutions = [];
-            
             for (let ant = 0; ant < this.numAnts; ant++) {
                 const routes = this._constructAntSolution();
                 const cost = this._calculateSolutionCost(routes);
@@ -356,17 +273,14 @@ class AcoCvrpSimulator {
                 if (cost < this.bestCost) {
                     this.bestCost = cost;
                     this.bestSolution = routes;
-                    // If we found a new best cost, update the convergence iteration
                     this.convergenceIteration = iter + 1; 
                 }
             }
-            
             this._updatePheromones(iterationSolutions);
             iterationHistory.push(this.bestCost);
         }
 
         const endTime = performance.now();
-
         return {
             solution: this.bestSolution,
             cost: this.bestCost,
@@ -380,24 +294,16 @@ class AcoCvrpSimulator {
 
 // --- UI, MAP INTEGRATION, AND HANDLERS ---
 
-/** Creates a new customer with random demand and time window */
 function createRandomCustomer(lat, lng) {
     const id = nextCustomerId++;
-    const demand = 1; // Each customer is 1 delivery point
-    
+    const demand = 1; 
     const baseHour = Math.floor(Math.random() * 6) + 9; 
     let twStart = baseHour + randGaussian(0, 1.5);
     twStart = Math.max(8, Math.min(16, twStart)); 
     const twEnd = twStart + Math.floor(Math.random() * 2) + 2; 
-
-    // The 'serviceTime' parameter uses default 5 mins
     return new Customer(id, lat, lng, demand, twStart, twEnd);
 }
 
-/**
- * --- REWRITTEN Step 1: Chunked Fetching for Distance Matrix ---
- * This solves the MAX_ELEMENTS_EXCEEDED error by splitting the request.
- */
 async function fetchDistanceMatrix(locations) {
     const statusMessage = document.getElementById('statusMessage');
     statusMessage.textContent = 'Step 1/3: Fetching road network data...';
@@ -405,15 +311,9 @@ async function fetchDistanceMatrix(locations) {
     statusMessage.classList.remove('text-gray-500');
     
     const n = locations.length;
-    // Initialize n x n matrices with Infinity
     const distanceMatrix = Array(n).fill(0).map(() => Array(n).fill(Infinity));
     const timeMatrix = Array(n).fill(0).map(() => Array(n).fill(Infinity));
-
-    // CHUNK_SIZE: 10 means a 10x10 request = 100 elements. 
-    // This fits exactly into the 100 element limit per request.
     const CHUNK_SIZE = 10; 
-
-    // Generate list of tasks (sub-matrix requests)
     const tasks = [];
     for (let i = 0; i < n; i += CHUNK_SIZE) {
         for (let j = 0; j < n; j += CHUNK_SIZE) {
@@ -421,32 +321,26 @@ async function fetchDistanceMatrix(locations) {
         }
     }
 
-    // Helper function to process one chunk
     const processChunk = (task) => {
         return new Promise((resolve) => {
             const origins = locations.slice(task.rowStart, task.rowStart + CHUNK_SIZE);
             const destinations = locations.slice(task.colStart, task.colStart + CHUNK_SIZE);
-
             const request = {
                 origins: origins,
                 destinations: destinations,
                 travelMode: google.maps.TravelMode.DRIVING,
                 unitSystem: google.maps.UnitSystem.METRIC,
             };
-
             distanceMatrixService.getDistanceMatrix(request, (response, status) => {
                 if (status !== 'OK') {
                     console.error('Distance Matrix Chunk Error:', status);
-                    // If a chunk fails, we just leave those values as Infinity (unreachable)
                     resolve(); 
                     return;
                 }
-
                 response.rows.forEach((row, rIdx) => {
                     row.elements.forEach((element, cIdx) => {
                         const actualRow = task.rowStart + rIdx;
                         const actualCol = task.colStart + cIdx;
-
                         if (element.status === 'OK') {
                             distanceMatrix[actualRow][actualCol] = element.distance.value;
                             timeMatrix[actualRow][actualCol] = element.duration.value;
@@ -458,9 +352,6 @@ async function fetchDistanceMatrix(locations) {
         });
     };
 
-    // Execute all chunk requests (sequentially or parallel)
-    // Using Promise.all is faster but might hit QPS limits if n is huge.
-    // For <50 nodes, Promise.all is usually fine.
     try {
         await Promise.all(tasks.map(processChunk));
         return { distances: distanceMatrix, times: timeMatrix };
@@ -472,10 +363,6 @@ async function fetchDistanceMatrix(locations) {
     }
 }
 
-
-/**
- * MODIFIED: Main function to run the simulation. Now ASYNC.
- */
 window.runSimulation = async function() {
     const btn = document.getElementById('runSimulationBtn');
     const statusMessage = document.getElementById('statusMessage');
@@ -487,14 +374,12 @@ window.runSimulation = async function() {
         return;
     }
 
-    // --- Start UI Loading State ---
     btn.disabled = true;
     statusMessage.textContent = 'Starting simulation...';
     statusMessage.classList.add('text-yellow-600');
     statusMessage.classList.remove('text-gray-500', 'text-green-600', 'text-red-600');
     
     try {
-        // --- STEP 1: Fetch Real Road Data (Chunked) ---
         const locations = [depotLocation, ...customerData.map(c => ({ lat: c.lat, lng: c.lng }))];
         const matrixData = await fetchDistanceMatrix(locations);
 
@@ -505,7 +390,6 @@ window.runSimulation = async function() {
         
         statusMessage.textContent = `Step 2/3: Running optimization for ${numCustomers} customers...`;
         
-        // --- STEP 2: Run ACO with Real Data ---
         const vehicleType = document.getElementById('vehicleTypeSelect').value;
         const fleetConfig = { [vehicleType]: 1 };
         
@@ -517,17 +401,12 @@ window.runSimulation = async function() {
 
         const params = { numAnts, numIterations, alpha, beta, rho, Q: 1000000 }; 
         
-        // Pass the fetched matrixData to the simulator
         currentSimulator = new AcoCvrpSimulator(depotLocation, customerData, fleetConfig, params, matrixData);
-        
-        // Run optimization (this is fast, the API call was the slow part)
         const results = currentSimulator.optimize();
 
-        // --- STEP 3 & 4: Update UI and Draw Routes ---
-        updateResults(results); // Step 4 (Now uses real time)
-        drawRoutes(currentSimulator.bestSolution, currentSimulator.customers); // Step 3
+        updateResults(results); 
+        await drawRoutes(currentSimulator.bestSolution, currentSimulator.customers); 
 
-        // --- Finish UI State ---
         btn.disabled = false;
         statusMessage.textContent = 'Optimization Complete!';
         statusMessage.classList.add('text-green-600');
@@ -541,56 +420,37 @@ window.runSimulation = async function() {
     }
 }
 
-/** Clears markers, routes, and resets data */
 window.resetMap = function() {
-    // Clear existing Google Maps elements
     markers.forEach(marker => marker.setMap(null));
-    directionRenderers.forEach(renderer => renderer.setMap(null)); // Clear routes
+    directionRenderers.forEach(renderer => renderer.setMap(null)); 
     markers = [];
     directionRenderers = [];
-    
-    // Reset simulation data
     customerData = [];
     nextCustomerId = 1;
     currentSimulator = null;
-    
-    // Re-place depot marker
     placeDepotMarker();
-
-    // Update UI
     document.getElementById('numCustomersDisplay').textContent = '0';
-    handleVehicleChange(false); // Resets status message
-    
+    handleVehicleChange(false); 
     document.getElementById('bestCost').textContent = '-';
     document.getElementById('vehiclesUsed').textContent = '-';
     document.getElementById('routeDetails').textContent = 'No routes calculated yet.';
 }
 
-
-/** * Updates the metrics and route details panel.
- * MODIFIED: Uses new formatDecimalHours() for time display.
- * MODIFIED: Updates labels for "Total Distance" and "Vehicle Used".
- * MODIFIED: Adds Convergence Iteration output.
- */
 function updateResults(results) {
     const solution = results.solution;
-    const cost = results.cost; // This is now real road distance (meters)
+    const cost = results.cost; 
     
-    // MODIFIED: Change text for Total Distance (previously Best Cost)
     const bestCostEl = document.getElementById('bestCost');
     if (bestCostEl) {
         bestCostEl.textContent = (cost / 1000).toFixed(2) + ' km';
     }
 
-    // MODIFIED: Change "Vehicles Used" to "Vehicle Used" and show type
     const vehiclesUsedEl = document.getElementById('vehiclesUsed');
     if (vehiclesUsedEl) {
-         // Get the selected vehicle type name (capitalized)
         const vType = selectedVehicleType.charAt(0).toUpperCase() + selectedVehicleType.slice(1);
         vehiclesUsedEl.textContent = vType;
     }
 
-    // NEW: Add Convergence Iteration to the output
     const routeDetailsDiv = document.getElementById('routeDetails');
     
     if (solution && solution.length > 0) {
@@ -601,24 +461,20 @@ function updateResults(results) {
             
             const vehicle = currentSimulator.vehicles[index];
             const vType = vehicle.type.charAt(0).toUpperCase() + vehicle.type.slice(1);
-            
             const stopCount = route.length;
             const routeStr = route.map(cIdx => `C${cIdx}`).join(' → ');
             const totalRouteCost = (currentSimulator._calculateSolutionCost([route]) / 1000).toFixed(2);
-
-            let routeTime = 0; // in hours
-            let lastNode = 0; // Depot
+            let routeTime = 0; 
+            let lastNode = 0; 
             for (const cIdx of route) {
                 const customer = customerData[cIdx - 1];
                 const travelTime = currentSimulator._calculateTravelTime(lastNode, cIdx, vehicle);
                 const arrivalTime = routeTime + travelTime;
-                
-                routeTime = arrivalTime + customer.serviceTime; // No waiting
+                routeTime = arrivalTime + customer.serviceTime; 
                 lastNode = cIdx;
             }
             const travelTimeBack = currentSimulator._calculateTravelTime(lastNode, 0, vehicle);
             routeTime += travelTimeBack;
-            
             const totalTimeString = formatDecimalHours(routeTime);
 
             return `
@@ -633,13 +489,11 @@ function updateResults(results) {
         }).join('');
         
         routeDetailsDiv.innerHTML = convergenceMsg + routesHtml;
-        
     } else {
         routeDetailsDiv.textContent = 'Failed to find a feasible solution or no routes generated.';
     }
 }
 
-/** Initializes the Google Map instance */
 window.initMap = function() {
     map = new google.maps.Map(document.getElementById("map"), {
         center: depotLocation,
@@ -649,23 +503,14 @@ window.initMap = function() {
         mapTypeControl: false,
         fullscreenControl: false
     });
-    
-    // --- NEW: Initialize Google services ---
     directionsService = new google.maps.DirectionsService();
     distanceMatrixService = new google.maps.DistanceMatrixService();
-
-    // Place initial depot marker
     placeDepotMarker();
-
-    // Add click listener to place customers
     map.addListener('click', handleMapClick);
-
-    // Add listener for vehicle dropdown
     document.getElementById('vehicleTypeSelect').addEventListener('change', () => handleVehicleChange(true));
     handleVehicleChange(false);
 }
 
-/** Places the fixed Depot marker (Yellow Home) */
 function placeDepotMarker() {
     const marker = new google.maps.Marker({
         position: depotLocation,
@@ -680,18 +525,14 @@ function placeDepotMarker() {
     markers.push(marker);
 }
 
-/** Handles click event to place a new customer marker */
 function handleMapClick(mapsMouseEvent) {
     const statusMessage = document.getElementById('statusMessage');
-
-    // Check if customer limit is reached
     if (customerData.length >= maxCustomers) {
         statusMessage.textContent = `Error: Cannot add more customers. Limit for ${selectedVehicleType} is ${maxCustomers}.`;
         statusMessage.classList.add('text-red-600');
         statusMessage.classList.remove('text-gray-500', 'text-yellow-600', 'text-green-600');
         return;
     }
-
     const lat = mapsMouseEvent.latLng.lat();
     const lng = mapsMouseEvent.latLng.lng();
     const newCustomer = createRandomCustomer(lat, lng);
@@ -700,11 +541,7 @@ function handleMapClick(mapsMouseEvent) {
     const marker = new google.maps.Marker({
         position: { lat, lng },
         map: map,
-        label: {
-            text: `C${newCustomer.id}`,
-            color: "white",
-            fontWeight: "bold"
-        },
+        label: { text: `C${newCustomer.id}`, color: "white", fontWeight: "bold" },
         icon: {
             path: google.maps.SymbolPath.CIRCLE,
             scale: 8,
@@ -715,20 +552,15 @@ function handleMapClick(mapsMouseEvent) {
         title: `C${newCustomer.id}`
     });
     markers.push(marker);
-
-    // Update UI
     document.getElementById('numCustomersDisplay').textContent = customerData.length;
     statusMessage.textContent = `Customer C${newCustomer.id} placed. (${customerData.length}/${maxCustomers} stops filled).`;
     statusMessage.classList.remove('text-red-600', 'text-yellow-600', 'text-green-600');
     statusMessage.classList.add('text-gray-500');
 }
 
-
-/** Handles change event from the vehicle selection dropdown */
 function handleVehicleChange(shouldResetMapIfConflict = false) {
     const select = document.getElementById('vehicleTypeSelect');
     const selectedOption = select.options[select.selectedIndex];
-    
     selectedVehicleType = selectedOption.value;
     const newMaxCustomers = parseInt(selectedOption.getAttribute('data-capacity'));
     const vType = selectedOption.textContent;
@@ -740,69 +572,86 @@ function handleVehicleChange(shouldResetMapIfConflict = false) {
     } else {
         statusMessage.textContent = `Vehicle set to: ${vType}. Max ${newMaxCustomers} stops.`;
     }
-
     maxCustomers = newMaxCustomers;
     statusMessage.classList.remove('text-red-600', 'text-yellow-600', 'text-green-600');
     statusMessage.classList.add('text-gray-500');
 }
 
-
-/** * --- STEP 3: Visualize the Real Route ---
- * MODIFIED: Draws the routes on the map using DirectionsService
- * This will draw road-snapped routes.
+/** * --- Chunked Draw Routes ---
+ * MODIFIED: Removed arrow icons (reverted to simple red line).
+ * Still handles 50+ customers by batching Directions API requests.
  */
-function drawRoutes(routes, customers) {
-    // Clear existing route renderers
+async function drawRoutes(routes, customers) {
     directionRenderers.forEach(renderer => renderer.setMap(null));
     directionRenderers = [];
     
     if (!routes || routes.length === 0) return;
 
-    routes.forEach((route, vIndex) => {
-        if (!route || route.length === 0) return;
+    for (let vIndex = 0; vIndex < routes.length; vIndex++) {
+        const route = routes[vIndex];
+        if (route.length === 0) continue;
         
         const color = colorPalette[vIndex % colorPalette.length];
         
-        // Build the list of stops for the Directions API
-        const routeStops = [];
-        routeStops.push({ location: depotLocation, stopover: true });
+        const fullPathStops = [];
+        fullPathStops.push({ lat: depotLocation.lat, lng: depotLocation.lng }); 
         route.forEach(cIdx => {
-            const customer = customers[cIdx - 1]; 
-            routeStops.push({ location: { lat: customer.lat, lng: customer.lng }, stopover: true });
+            const cust = customers[cIdx - 1];
+            fullPathStops.push({ lat: cust.lat, lng: cust.lng });
         });
-        
-        if (routeStops.length < 2) return; // Not a valid route
+        fullPathStops.push({ lat: depotLocation.lat, lng: depotLocation.lng }); 
 
-        const origin = routeStops[0].location;
-        const destination = depotLocation; // Always return to depot
-        const waypoints = routeStops.slice(1); // All customers are waypoints
+        const MAX_WAYPOINTS = 23; 
+        let combinedPath = [];
 
-        const request = {
-            origin: origin,
-            destination: destination,
-            waypoints: waypoints,
-            travelMode: google.maps.TravelMode.DRIVING,
-            optimizeWaypoints: false // IMPORTANT: We use ACO's order, not Google's
-        };
-
-        // Call the Directions Service
-        directionsService.route(request, (response, status) => {
-            if (status === 'OK') {
-                // Create a new renderer for this specific route
-                const renderer = new google.maps.DirectionsRenderer({
-                    map: map,
-                    directions: response,
-                    suppressMarkers: true, // Hide A, B, C default markers
-                    polylineOptions: {
-                        strokeColor: color,
-                        strokeOpacity: 0.8,
-                        strokeWeight: 5
-                    }
-                });
-                directionRenderers.push(renderer);
-            } else {
-                console.error('Directions request failed due to ' + status);
+        for (let i = 0; i < fullPathStops.length - 1; ) {
+            const origin = fullPathStops[i];
+            let remaining = (fullPathStops.length - 1) - i;
+            let chunkSize = Math.min(remaining, MAX_WAYPOINTS + 1); 
+            
+            const destIndex = i + chunkSize;
+            const destination = fullPathStops[destIndex];
+            
+            const waypoints = [];
+            for (let j = i + 1; j < destIndex; j++) {
+                waypoints.push({ location: fullPathStops[j], stopover: true });
             }
+
+            const request = {
+                origin: origin,
+                destination: destination,
+                waypoints: waypoints,
+                travelMode: google.maps.TravelMode.DRIVING,
+                optimizeWaypoints: false
+            };
+
+            try {
+                const result = await new Promise((resolve, reject) => {
+                    directionsService.route(request, (response, status) => {
+                        if (status === 'OK') resolve(response);
+                        else reject(status);
+                    });
+                });
+
+                if (result.routes[0] && result.routes[0].overview_path) {
+                    combinedPath = combinedPath.concat(result.routes[0].overview_path);
+                }
+            } catch (e) {
+                console.error("Chunk direction failed", e);
+            }
+            i = destIndex;
+        }
+
+        // Reverted to simple line without icons
+        const polyline = new google.maps.Polyline({
+            path: combinedPath,
+            geodesic: true,
+            strokeColor: color,
+            strokeOpacity: 0.8,
+            strokeWeight: 5,
+            map: map
         });
-    });
+
+        directionRenderers.push(polyline);
+    }
 }
